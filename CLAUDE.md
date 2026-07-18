@@ -4,7 +4,7 @@
 
 An Excel-based scheduling and capacity tracker for Leo Berwick's US M&A Tax team (~23 people, ~290 live engagements): deals → staffing assignments → hours-by-level estimates → a person×week capacity heatmap, with a NetSuite actuals feedback loop. **Everything is delivered as an Excel workbook — there is no application code.** The web app idea is deferred (PLAN.md §10).
 
-**Read `PLAN.md` before doing anything.** §4 is the workbook spec (tab/column contract), §5 the step roadmap, §6 working agreements, §7 technical notes. Do the step you were asked to do; don't start the next one unprompted.
+**Read `PLAN.md` before doing anything.** §4 is the workbook spec (tab/column contract), §5 the step roadmap, §6 working agreements, §7 technical notes. Follow the step protocol below — one step per session, hard stop after delivery.
 
 **Current status:** Step 1 in progress — `scripts/build_workbook.py` runs end-to-end (313 deals, 687 assignments, 209 personal statuses, 32 review items) but recalc verification has not yet passed. Whole-column refs were replaced with bounded ranges after stalling LibreOffice; re-verify from scratch.
 *(Update this line in the same commit whenever a step completes.)*
@@ -15,6 +15,12 @@ An Excel-based scheduling and capacity tracker for Leo Berwick's US M&A Tax team
 - `scripts/build_workbook.py` — regenerates the tracker from the July 9 source file. **Bootstrap only: forbidden after Step 2** (it would destroy the team's live edits).
 - `workbook/` — dated output snapshots (`US_MA_Tax_Scheduling_Tracker_v2_<YYYY-MM-DD>.xlsx`). Created in Step 1. After Step 2, the latest snapshot (or the team's SharePoint copy the user provides) is the source of truth — edit it in place with openpyxl; never rebuild.
 - `data/` — (optional) the source inputs: `Scheduling_US_MA_July_9.xlsx` and the June 4 requirements email. The repo owner decides whether to commit these (confidential client data); if absent, ask the user to upload them for Steps 1–2. Later steps only need the latest workbook.
+
+## Step protocol — one step per session, hard stop after delivery
+
+1. Before touching anything, confirm which PLAN.md §5 step this session is executing.
+2. Deliver that step: meet its acceptance criteria, commit + push (workbook snapshot, script changes, doc updates), and update the Current-status line above in the same commit.
+3. **Then STOP.** End with a handoff report: what was delivered, verification evidence (recalc result + the spot-checks you ran), any decisions or questions for the humans (e.g., open Review-tab items), and which step comes next. Do **not** begin the next step — not partially, not "while we're here", not even if the request was ambiguous about scope — until the user explicitly asks in a new instruction. The pause between steps is where the team reviews the workbook and answers open questions; work done past it is likely to be thrown away.
 
 ## Non-negotiable rules
 

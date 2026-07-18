@@ -55,7 +55,7 @@ Seven tabs. This is the contract every later step builds on — don't restructur
 
 ## 5. Delivery roadmap
 
-Model guidance in one line: **Opus** for steps where the design is still open or correctness is subtle (formula architecture, data-matching edge cases); **Sonnet** for well-specified execution against this plan and the existing script. Every session must follow the working agreements in §6.
+Model guidance in one line: **Opus** for steps where the design is still open or correctness is subtle (formula architecture, data-matching edge cases); **Sonnet** for well-specified execution against this plan and the existing script. Every session must follow the working agreements in §6 — in particular the hard stop after each step: deliver, report, and wait for the user's go-ahead before anything further.
 
 | # | Step | Model | Size |
 |---|------|-------|------|
@@ -131,6 +131,7 @@ Only if the team asks for it after using the tracker: scenario override columns 
 4. **Never invent business numbers silently.** Any placeholder (hours, capacity, probability) gets yellow fill + a Review-tab item.
 5. **Snapshot per step:** commit `workbook/US_MA_Tax_Scheduling_Tracker_v2_<date>.xlsx` (or the step's output) and the updated scripts to the repo. The live team copy sits on SharePoint/Teams; the repo holds the spec, scripts and snapshots.
 6. Keep the §4 tab/column contract stable; if a step must change it, update §4 in the same commit.
+7. **One step per session; hard stop after delivery.** Complete the step's acceptance criteria, commit and push, then stop with a handoff report (delivered / verified / open questions / next step). Never roll into the next step unprompted — the pause is where the team reviews the workbook and answers the open questions the next step depends on.
 
 ## 7. Technical notes for implementers (hard-won, read before writing formulas)
 
