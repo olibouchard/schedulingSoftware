@@ -1,155 +1,156 @@
-# US M&A Tax — Resource Scheduling & Capacity Planning: Design Plan
+# US M&A Tax — Scheduling Tracker in Excel: Delivery Plan
 
 **Prepared for:** Leo Berwick US M&A Tax team (per Justine Morin's brief of June 4)
 **Inputs reviewed:** "Scheduling M&A US Tax" email thread · `Scheduling_US_MA_July_9.xlsx` (current staffing tracker)
-**Status:** Draft for review. Design decisions locked so far are in §3; open discovery questions in §8.
+**Scope decision:** the deliverable is an **Excel workbook**, end to end. The web app is deferred (see §10). Each step below is a self-contained work package sized for one Claude Code session, with a recommended model (Opus vs Sonnet), the inputs to hand the session, and acceptance criteria.
 
 ---
 
 ## 1. The ask (from the email)
 
-Design and implement a scheduling and resource-allocation solution for the US M&A Tax team that:
-
-- Improves resource allocation across transactions and balances workload across the team
-- Supports professional development (exposure across deal types and workstreams)
-- Provides forward visibility on pipeline and capacity
-- Is scalable as the team grows and embeds into existing systems (NetSuite, internal workflows)
-
-The core loop Justine describes:
-
-1. A deal enters the pipeline
-2. The system assigns an **expected effort profile** (estimated hours by level, Associate → Partner — directional, not precise)
-3. Effort translates into a **staffing mix across levels** (Associate-heavy vs VP-heavy, etc.)
-4. A **forward schedule** is generated across the team (time-phased: diligence spike, quieter post-signing)
-5. The schedule **updates dynamically** as deals evolve (timing, probability, scope, reassignment)
-
-Supporting requirements: weekly capacity by resource with over-allocation / under-utilization flags; scenario analysis; a weekly 15–20 min governance check-in for VP+ to validate near-term capacity and confirm staffing; a NetSuite actuals-vs-estimates feedback loop; rules-based estimation first, AI-enhanced over time.
+A forward-looking scheduling and resource-allocation process: a deal enters the pipeline → gets an expected effort profile (hours by level, Associate → Partner — directional, not precise) → effort becomes a staffing mix across levels → a time-phased forward schedule (diligence spike, quieter post-signing) → weekly capacity by person with over-allocation / under-utilization flags → updated dynamically as deals move, with a NetSuite actuals-vs-estimates feedback loop and a weekly 15–20 min governance check-in.
 
 ## 2. Current state — what the July 9 workbook shows
 
-### 2.1 Contents
+- **292 register rows** (195 WIP, 90 Proposal, rest Dead/Closed/other) across **~23 people**: 4 Partners, 4 MDs, 4 Directors, 3 VPs, 4 Senior Associates + a 4-person Renewable specialist pool.
+- **No time dimension anywhere** — no dates, hours, or % → capacity math is impossible today.
+- **No deal attributes** (transaction type, scope, complexity…) → the effort-estimation drivers aren't captured.
+- **Identity ambiguity** — free-text first names; two Kyles (Kidd = Partner, Risser = Director) and four Will variants, resolvable only by which level-column a name sits in; multi-name cells ("Tania / Will", "Dorian, Yiyi, Robbie").
+- **Status chaos** — 34+ hand-typed per-person status strings (three spellings of "Pencils Down") mixing deal lifecycle with personal involvement.
+- **No probability** on the 90 proposals; **1 duplicate register row** (`Cosmetic _1`); **22 engagements** exist only on the per-person survey tab, not in the register.
+- The "Summary by Person" tab is a manual survey — exactly the coordination overhead to eliminate.
 
-- **`Sheet1` (deal register):** 292 coded engagements — 195 WIP, 90 Proposal, plus a handful of Dead/Closed/other. Columns: Client, Project ID, WIP-vs-Proposal, then one staffing column per level (Partners, MD, Director, VP, SA, Renewable Specialist) holding free-text first names. A "Status – Complete and ready to invoice" column exists but is entirely empty.
-- **Roster (embedded in side columns):** ~23 people — 4 Partners, 4 MDs, 4 Directors, 3 VPs, 4 Senior Associates, and a 4-person Renewable specialist pool.
-- **`Summary by Person`:** a manually assembled per-person survey of engagement statuses, in two different layouts depending on who filled it in, with **34+ distinct free-text status values** (including three spellings of "Pencils Down" and entries like "Don't know what this is").
-- **`Filtered Status`:** a manual cleanup pivot for a few people — evidence someone is already spending time reconciling this by hand.
+## 3. Decisions locked
 
-### 2.2 Gaps between current state and the target
+| Decision | Choice |
+|---|---|
+| Platform | **Excel workbook** (web app deferred) |
+| First deliverable | Thin end-to-end slice: tracker + hours-by-level estimates + person×week capacity heatmap |
+| Effort & capacity unit | **Hours per week** (matches NetSuite; entry is template-driven, nobody hand-types grids) |
+| NetSuite actuals | **CSV export** of time entries, pasted/imported into the workbook |
+| Probability prefill | WIP = 100%, Proposal = 50% (flagged yellow for review) |
+| Blank deal dates | Deal counts in **every** week of the capacity view until dates are filled |
 
-| # | Gap | Consequence today | What the design must add |
-|---|-----|-------------------|--------------------------|
-| 1 | **No time dimension** — no dates, hours, or % anywhere | Capacity math is impossible; the sheet says *who* is on a deal, never *how much* or *when* | Planned hours per person-deal-week; deal dates (expected start / sign / close) |
-| 2 | **No deal attributes** | The estimation drivers from the email (transaction type, entity class, scope, industry, complexity, timeline) aren't captured | Structured attribute fields at intake, driving effort templates |
-| 3 | **Identity ambiguity** — free-text first names | "Kyle" is a Director on some rows and a Partner on others (two Kyles); four variants of Will; case/whitespace variants; multi-name cells ("Tania / Will", "Dorian, Yiyi, Robbie") | Canonical person records with IDs; migration disambiguates via the level column a name appears in, with a human review list for leftovers |
-| 4 | **Status chaos** — 34+ hand-typed values mixing lifecycle and phase | Nobody can filter reliably; the invoicing column was abandoned | Controlled lifecycle status + separate deal-phase field (§4.4) |
-| 5 | **No probability on the 90 proposals** | Pipeline-weighted capacity is impossible; proposals are a third of the register | Probability field (bucketed), set at the weekly check-in |
-| 6 | **Hierarchy mismatch** | Email lists Associate → Partner (6 levels); the sheet has no Associate column, and "Renewable Specialist" is a cross-cutting pool the email doesn't mention | Level *and* specialty modeled separately; confirm Associate plans in discovery |
-| 7 | **Referral chains in the client field** ("A : B : C") | Referral source, paying entity, and end client are conflated | Client entity with role (referral source / paying entity / end client) |
-| 8 | **Volume skew** | Renewable specialists carry very high engagement counts (one person appears on 75 projects) — many small reviews alongside chunky M&A deals | Effort templates must cover both shapes: high-volume/low-hours advisory and full-scope deals |
+## 4. Workbook design (the product spec)
 
-**Scale reality check:** ~23 people × ~300 engagements × 52 weeks is tiny data. Nothing here is a performance problem — the hard parts are workflow design, estimation quality, and adoption. "Scalable" means organizationally scalable (new levels, new people, sub-teams), which is a data-model concern, not an infrastructure one.
+Seven tabs. This is the contract every later step builds on — don't restructure it casually.
 
-## 3. Design decisions locked so far
+| Tab | Purpose | Key columns / cells |
+|---|---|---|
+| **Guide** | How to use, color legend, baked-in assumptions | — |
+| **Capacity** | Person × week heatmap of planned hours; the dashboard | A person · B capacity · C+ 26 weekly columns; Team planned / capacity / headroom rows below; red > capacity, amber > 85% |
+| **Deals** | One row per engagement | A Project ID · B client as filed · C primary client · D end client · E referral? · F lifecycle · G phase · H probability · I/J expected start/end · K–P attributes (txn type, entity class, scope, industry, complexity, timeline) · Q # staffed (formula) · R planned hrs/wk (formula) · S source status · T notes |
+| **Assignments** | One row per person × deal; the staffing ledger | A person · B roster level (formula) · C project ID · D client (f) · E deal lifecycle (f) · F staffed-as level · G **Active?** · H override hrs/wk · I planned hrs/wk used (f: override, else level default) · J deal probability (f) · K weighted hrs/wk (f) · L/M deal start/end (f) · N source status · O notes |
+| **Roster** | Team list | A person · B level · C specialty · D weekly capacity hrs · E active assignments (f) · F committed hrs/wk (f) · G utilization (f, CF flags) |
+| **Settings** | All knobs | B3 capacity window start (Monday) · B4 probability-weighting toggle Yes/No · B8:B14 default hrs/wk by level (placeholders) · columns D–L: dropdown source lists (named ranges) |
+| **Review** | Migration items needing sign-off + the status-mapping table | Topic / person / project / detail / suggested action / **your decision** (yellow) |
 
-| Decision | Choice | Implication |
-|----------|--------|-------------|
-| Delivery form | **Hybrid path** | Ship a cleaned, structured workbook in week 1–2 for immediate relief; build the web app in parallel; the workbook doubles as the schema prototype and migration source |
-| MVP scope | **Thin end-to-end slice** | First app release covers the whole loop shallowly: tracker + simple hours-by-level estimates + person×week capacity heatmap with flags — then each part deepens |
-| Effort & capacity unit | **Hours per week** | Matches NetSuite time entries, so estimate-vs-actual calibration is direct. Entry stays template-driven — nobody hand-types hour grids |
-| NetSuite | **CSV export first** | A saved-search export of time entries by project code, imported weekly. Feedback loop from day one without an API project; automate via API in Phase 4 |
+**Core mechanics** (already implemented in the prototype script):
 
-## 4. Target concept
+- Hours flow: `Assignments!I = override if set, else Settings default for the staffed-as level; 0 if Inactive` → `K = I × deal probability` (only when Settings!B4 = "Yes") → Capacity cell = SUMPRODUCT over assignments where the week falls inside the deal's date window (blank dates = all weeks) → Roster/Deals roll-ups via SUMIFS/COUNTIFS.
+- Per-person involvement is **Assignments!G Active?**, distinct from deal lifecycle — this is how "pencils down for me, deal still live" is modeled. Deal lifecycle Dead/Closed/On hold/Internal forces assignments Inactive.
+- Migration mapping: WIP→Active, Proposal→Proposal, Dead/Closed as-is, "General Code"→Internal, "Not active"→On hold; the 34 personal statuses map to Active/Inactive per the table on the Review tab; unknown strings → Active + review flag (conservative).
+- Color code: blue text = input · black = formula · green = cross-sheet pull · yellow fill = fill/review this · grey row = inactive.
+- One EXAMPLE row on Deals (`EXAMPLE_0`) and one Inactive example on Assignments; both deletable, counted nowhere.
 
-### 4.1 Data model (core entities)
+## 5. Delivery roadmap
 
-- **Person** — canonical name, level (Associate → Partner), specialty tags (e.g., Renewable), weekly capacity hours, active dates, development goals (target exposure by deal type / workstream)
-- **Client** — canonical name, with roles per engagement: referral source vs paying entity vs end client
-- **Deal** — project code (matching NetSuite), client links, lifecycle status, **probability %**, key dates (expected start / sign / close), attributes: transaction type (stock / asset / partnership), entity classification (corp / flow-through), scope set (TDD, structuring, modeling, PW&A, …), industry, complexity flags (tax equity, cross-border, carve-out, …), timeline (compressed / standard)
-- **Effort template** — attribute pattern → baseline hours by level + a phase curve (how those hours spread over the deal's weeks)
-- **Assignment** — person × deal × role level → planned hours per week (generated from the template's staffing mix, then editable)
-- **Actuals entry** — NetSuite time rows (person, project code, week, hours)
-- **Scenario** — an overlay of changed dates / probabilities / assignments for what-if analysis, never touching the live plan until applied
+Model guidance in one line: **Opus** for steps where the design is still open or correctness is subtle (formula architecture, data-matching edge cases); **Sonnet** for well-specified execution against this plan and the existing script. Every session must follow the working agreements in §6.
 
-### 4.2 The scheduling loop (engine)
+| # | Step | Model | Size |
+|---|------|-------|------|
+| 1 | Finish & verify tracker v2 generation | **Sonnet** | Small |
+| 2 | Apply team review round | **Sonnet** | Small |
+| 3 | Time-phased effort templates | **Opus** | Large |
+| 4 | NetSuite actuals import + variance | **Opus** | Medium |
+| 5 | Weekly check-in tab | **Sonnet** | Small |
+| 6 | Hardening & polish | **Sonnet** | Small |
+| 7 | Scenario toggle (optional) | **Opus** | Medium |
 
-1. **Intake:** deal created with attributes → matched to an effort template → estimated hours by level (directional, overridable)
-2. **Phasing:** hours spread across the timeline via the phase curve (diligence spike → pre-close → post-close taper)
-3. **Staffing:** system suggests individuals per level based on available capacity, level fit, and development goals; a senior confirms
-4. **Ledger:** person × week planned hours (probability-weighted and unweighted views) vs capacity → utilization %, with over-allocation and under-utilization flags (thresholds set in discovery)
-5. **Update loop:** status / date / probability changes reflow *future* weeks only; past weeks stay as record
-6. **Calibration:** weekly NetSuite CSV → actual vs estimate by deal and level → suggested template multiplier updates (rules-based; a fit/AI layer once enough history accumulates)
+### Step 1 — Finish & verify tracker v2 generation · **Sonnet**
 
-### 4.3 Views
+`scripts/build_workbook.py` already exists and runs: it migrated **313 engagements** and **687 assignment rows**, applied **209** personal statuses, and produced **32 review items**. Whole-column references initially stalled LibreOffice recalculation; they are now bounded, but **recalc verification has not yet passed** — that is this step's first task.
 
-- **Pipeline board** — live + expected deals, filterable by status, probability, attributes
-- **Capacity heatmap** — person × week, color-coded utilization, the team's main screen
-- **Deal page** — staffing, estimate vs actual burn, dates, history
-- **Person page** — load ahead, current mix of deal types / workstreams vs development goals
-- **Check-in view** — auto-generated agenda for the weekly 15–20 min: people over-allocated in the next 4 weeks, unstaffed or under-staffed incoming deals, aging proposals, stale statuses
-- **Scenario compare** — e.g., "these two deals close simultaneously" or "deal slips 3 weeks" side-by-side with the live plan
+- Regenerate the workbook, run the xlsx skill's `recalc.py` (timeout ≥ 300 s), fix until **zero formula errors**.
+- Spot-check against independently computed values: pick 3 people, hand-count their Active assignments and committed hrs/wk from the Assignments tab and compare to Roster E/F; check one Capacity cell equals the sum of that person's weighted hours; check one deal's # staffed.
+- Verify dropdowns (Person, Project ID, lifecycle, Active?) and conditional formatting work in a real Excel/LibreOffice open, and the Guide tab reads correctly.
+- Acceptance: clean recalc JSON; spot-checks match; file opens with working validation; counts match the numbers above (± any deliberate fixes).
+- Output: `workbook/US_MA_Tax_Scheduling_Tracker_v2_<date>.xlsx` committed, plus any script fixes.
 
-### 4.4 Status taxonomy (proposed — replaces 34 free-text values)
+### Step 2 — Apply team review round · **Sonnet** (after humans answer)
 
-Two separate fields:
+The team (Justine's group) fills in: the Review tab's yellow decision column, real weekly capacities, tuned level defaults, probabilities on proposals, and expected start/end dates for at least the biggest deals. Then a session:
 
-- **Lifecycle:** `Proposal` → `Active` → (`On hold` | `Pens down`) → `Complete – to invoice` → `Invoiced` → `Closed`, with `Dead` reachable from Proposal/Active
-- **Phase** (active deals only): `Pre-LOI` · `Diligence` · `Signing → Close` · `Post-close`
+- Applies decisions that require restructuring (e.g., merging `EV3`/`EV3_1`, correcting a mis-mapped status, adding a missed person) by **editing the workbook in place** with openpyxl — never regenerating from the script (see §6).
+- Re-verifies with recalc + spot-checks.
+- Acceptance: every Review row has a decision recorded or an explicit "open"; workbook still recalcs clean.
+- **After this step the workbook is the source of truth and the build script is bootstrap-only.**
 
-The current sheet mixes these into one column (e.g., "TDD done / Structuring Ongoing", "Invoicing soon") — splitting them is what makes both the workload curve and the invoicing pipeline reportable.
+### Step 3 — Time-phased effort templates · **Opus**
 
-## 5. Delivery plan — hybrid, two tracks
+Today every assignment is a flat hrs/wk. This step adds the estimation layer from the email:
 
-### Track A — structured workbook (weeks 1–2, immediate relief)
+- A **Templates** area (likely on Settings or its own tab): deal archetypes (e.g., "Buy-side TDD + structuring, stock corp, standard timeline" / "PW&A review" / "Tax equity structuring") → suggested hours **by level** and a **phase curve** (how effort distributes between expected start and end — e.g., diligence-heavy front, post-signing taper).
+- Deals pick an archetype (dropdown); suggested per-level hours flow to assignments as the new default (override still wins).
+- Capacity becomes genuinely time-phased: a deal's weekly load follows its curve instead of a flat rate.
+- **Design constraints for the session:** stay INDEX/MATCH-era (no XLOOKUP/FILTER — see §7); keep recalc under ~1 min; do not explode into a 687×26 helper matrix unless proven necessary; template numbers are placeholders until the team's template workshop — mark them yellow with a Review item.
+- Acceptance: pick 2 archetypes, hand-compute one deal's weekly spread and one person's week, match the sheet; recalc clean; Guide updated.
 
-1. **Cleaning/migration script** (Python) run against the July 9 file:
-   - Normalize names against the canonical roster; disambiguate via the level column each name appears in; split multi-name cells; fix case/whitespace
-   - Parse client chains into referral source / paying entity / end client
-   - Map the 34 status values onto the §4.4 taxonomy
-   - Emit a short **review list** of genuinely ambiguous rows for a human to confirm
-2. **Workbook v2**, generated by the script:
-   - `Roster` — canonical people, level, specialty, weekly capacity hours
-   - `Deals` — one row per engagement: attributes, probability, expected dates, lifecycle + phase via dropdown validation
-   - `Assignments` — one row per person-deal, with estimated hours by level
-   - `Capacity` — person × week pivot of planned hours with conditional-formatting flags
-   - Legend naming the cells to edit + one example row
-3. This workbook immediately serves the weekly check-in, and is the vehicle for collecting the missing data (dates, probabilities, attributes) that the app will import. It is retired as soon as the MVP is adopted — it is a bridge, not a second system to maintain long-term.
+### Step 4 — NetSuite actuals import + variance · **Opus**
 
-### Track B — web app (parallel)
+- Define the CSV contract for a NetSuite saved search: `project code, person, week start, hours` (document it on the Guide tab for whoever builds the search).
+- An **Actuals** tab with a paste-in area; matching by project code + a person-name mapping table (NetSuite display names ≠ tracker first names — reuse the roster as the mapping anchor).
+- An unmatched-rows report (codes or people that don't match get listed, not silently dropped).
+- Estimate-vs-actual views: per deal (planned vs burned by level) and a calibration summary per level/archetype suggesting default adjustments.
+- Acceptance: with a fabricated 20-row sample CSV (clearly marked fake), matching, variance and unmatched reporting all verifiably correct; recalc clean.
 
-- **Phase 1 — MVP, thin end-to-end slice:** sign-in (likely Microsoft 365 SSO — the firm is on Outlook/Exchange), CRUD for roster/deals/assignments, template-picker effort estimates with override, person×week capacity heatmap with flags, CSV import (workbook v2 + NetSuite time export), audit trail of changes
-- **Phase 2 — estimation depth:** template library workshopped with VP/Director/MD to encode current heuristics per deal archetype; phase curves; probability-weighted pipeline view
-- **Phase 3 — dynamics:** scenario sandbox, reassignment workflow, auto-generated check-in agenda, notifications (e.g., "you were added to X", "Y is over 100% in two weeks")
-- **Phase 4 — integration & learning:** NetSuite API replaces the CSV; calibration dashboard (estimate vs actual by template and level) with suggested multiplier updates; AI-enhanced estimation once history accumulates; growth features (new levels, sub-teams)
+### Step 5 — Weekly check-in tab · **Sonnet**
 
-**Suggested stack (to confirm):** TypeScript + React front end, Node or Python API, Postgres (SQLite is honestly sufficient at this scale to start). Private hosting with role-based access — client names and deal codenames are confidential M&A information.
+A formula-only agenda for the 15–20 min governance meeting:
 
-## 6. Data hygiene & migration
+- Over-allocated people (next 4 weeks, from Capacity), under-utilized people, Active/Proposal deals with **# staffed = 0** or missing levels, proposals still at the default 50%, deals with blank dates, stale rows.
+- Prerequisite: append an `Added on` date column to Deals (migrated rows = 2026-07-09) so aging is computable.
+- Acceptance: each agenda block cross-checked against a manual filter; recalc clean; Guide's check-in how-to updated to "open the Check-in tab".
 
-The July 9 file is the seed data. The migration script (Track A step 1) is written once and kept: it becomes the importer the app uses, so the cleanup effort is not throwaway. Expected human touchpoints: the ambiguous-name review list and sign-off on the status mapping — likely a 30-minute review, not a re-keying exercise.
+### Step 6 — Hardening & polish · **Sonnet**
 
-## 7. NetSuite feedback loop (CSV-first)
+- Sheet protection with input cells unlocked (formula columns can't be typed over accidentally); strict data validation where safe (reject unknown names/codes).
+- A small health-check panel: assignments pointing at unknown people/codes, deals with no staffing, duplicate codes.
+- Print/export area for the check-in; final pass on widths, wrapping, Guide wording.
+- Acceptance: protected sheets still allow every intended edit path in §4's color code; health checks all green on the live file; recalc clean.
 
-1. NetSuite admin builds a saved search: time entries grouped by project code × person × week
-2. Weekly export (CSV) dropped into the tool → matched on project code (the register's "Project ID" appears NetSuite-shaped; confirm in discovery)
-3. Deal pages show estimate vs actual burn; calibration view aggregates variance by template
-4. Phase 4 replaces the manual export with SuiteTalk/REST on a schedule — same pipeline, different transport
+### Step 7 — Scenario toggle (optional) · **Opus**
 
-## 8. Open questions for discovery
+Only if the team asks for it after using the tracker: scenario override columns on Deals (probability / dates) plus a Settings switch so Capacity can show Live vs Scenario side by side. In Excel this is the feature most likely to add confusing complexity — build it only on demand, and consider whether its arrival is really the trigger to revive the web app (§10).
 
-1. **Roster ground truth** — are there Associates today or planned hires? Anyone missing from the side-column roster? Who owns roster updates?
-2. **Renewable pool** — do the 4 specialists staff only renewable/insurance-review work or blend into M&A deals? They likely need their own effort templates (high-volume, low-hours engagements).
-3. **Capacity baseline** — standard weekly hours per level? Billable targets? Where do PTO/holidays come from (HR system, Outlook calendars)?
-4. **Probability buckets** — e.g., 25/50/75/90%? Who sets and updates them (proposal owner vs check-in)?
-5. **Dates at intake** — what is actually known when a deal enters (expected sign/close)? Typical phase durations by scope?
-6. **NetSuite specifics** — do register "Project ID"s match NetSuite project codes exactly? Entry granularity (task-level?)? How much history is available for calibration? Who can build the saved search?
-7. **Access & permissions** — who edits vs views? Confirm Microsoft 365 SSO. Any hosting constraints (approved cloud, region)?
-8. **Development goals** — how formal should this be (e.g., "each SA sees ≥2 deal types per quarter")? It drives the staffing suggester.
-9. **Non-deal time** — BD, proposal writing, internal projects, training: model as pseudo-engagements so capacity is honest?
-10. **Confidentiality walls** — any deals restricted to named staff, requiring per-deal access control from day one?
+## 6. Working agreements for every Claude session
 
-## 9. Immediate next steps
+1. **Hand the session:** this `PLAN.md`, `scripts/build_workbook.py`, the **latest** workbook from `workbook/`, and (for Steps 1–2) the original `Scheduling_US_MA_July_9.xlsx`.
+2. **Never regenerate from the script after Step 2** — the team's live edits would be destroyed. From Step 3 on, edit the existing workbook in place with openpyxl (load without `data_only`, preserve formulas) and save a dated copy first.
+3. **Always verify:** run the xlsx skill's `recalc.py` (timeout ≥ 300 s) until zero errors, then spot-check 2–3 computed values by hand before delivering. A clean recalc proves formulas evaluate, not that they're right.
+4. **Never invent business numbers silently.** Any placeholder (hours, capacity, probability) gets yellow fill + a Review-tab item.
+5. **Snapshot per step:** commit `workbook/US_MA_Tax_Scheduling_Tracker_v2_<date>.xlsx` (or the step's output) and the updated scripts to the repo. The live team copy sits on SharePoint/Teams; the repo holds the spec, scripts and snapshots.
+6. Keep the §4 tab/column contract stable; if a step must change it, update §4 in the same commit.
 
-1. Review this plan (Justine / Tomas / Zack) and answer §8 — a single 30-minute session covers most of it
-2. Build Track A: cleaning script + workbook v2 from the July 9 file, producing the ambiguity review list
-3. Scaffold Track B: repo structure, schema, importer reusing the Track A script
-4. Template workshop with VP/Director/MD to draft the first effort templates (can run in parallel with MVP build)
+## 7. Technical notes for implementers (hard-won, read before writing formulas)
+
+- **Bounded ranges only.** Whole-column references (`Assignments!$A:$A`) stalled LibreOffice recalc past 120 s on this workbook; bounded (`$A$2:$A$721`) is the standard. Extents: Deals rows 2–354, Assignments rows 2–721, Roster rows 2–40 — spare rows are pre-filled with guarded formulas (`IF($A2="","",…)`).
+- **Function whitelist:** Excel-2007-era only — SUMIFS/COUNTIFS/SUMPRODUCT/INDEX/MATCH/IFERROR. No XLOOKUP, FILTER, SORT, UNIQUE, SEQUENCE (they break the LibreOffice verification harness and older Excel). If TEXTJOIN/IFS/SWITCH/MAXIFS/MINIFS are ever needed, write them as `_xlfn.TEXTJOIN(…)` etc.
+- **Blank-date OR-trick:** the capacity window test is `((start<=week)+(start=""))*((end>=week)+(end=""))` inside SUMPRODUCT. It relies on helper cells returning `""` (a string) — a **truly empty** cell compares as 0 and would double-count. That's why every row in the formula extent carries a guarded formula; don't clear those cells, and don't shrink SUMPRODUCT ranges past rows that lack them.
+- **Numeric helpers must yield 0, not ""**, anywhere they're multiplied in SUMPRODUCT (text → #VALUE!).
+- **Data validation uses named ranges** (`RosterNames`, `DealCodes`, `LifecycleList`, …) — portable across Excel versions and LibreOffice, unlike direct cross-sheet DV references.
+- **Heatmap zero-hiding** via number format `0.0;-0.0;` keeps the grid readable.
+- The probability toggle flows through exactly one choke point: `Assignments!K`. Change weighting logic there only.
+- Dates are hardcoded inputs (window start = Settings!B3), never `TODAY()`/`NOW()` — volatile functions would make recalc results shift between sessions.
+
+## 8. Governance (how the team runs it)
+
+Weekly 15–20 min (VP/Director/MD/Partner): open Capacity → who's red/amber next 4 weeks; Check-in tab (from Step 5) → unstaffed incoming deals, proposals to re-probability, dates to fill; record changes live in the workbook. Monthly: compare NetSuite actuals vs estimates (Step 4 views) and tune the level defaults / templates.
+
+## 9. Open data questions (feed Step 2)
+
+Associates — real or planned? · Renewable pool: blended into M&A staffing or separate? · Real weekly capacity + billable targets by level · PTO source · Probability buckets · Do register Project IDs match NetSuite codes exactly? · NetSuite history depth · Confidentiality walls on any deals? · Non-deal time (BD, proposals, internal) as pseudo-engagements?
+
+## 10. Deferred: web app
+
+Revisit when the workbook hits its natural limits — signals: concurrent-edit conflicts on SharePoint, the team outgrowing ~35–40 people, real appetite for scenario analysis (Step 7 demand), or the NetSuite CSV ritual becoming a burden. The workbook's tab/column contract (§4) is deliberately database-shaped so migration stays a straight import.
