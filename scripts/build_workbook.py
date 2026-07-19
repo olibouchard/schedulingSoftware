@@ -99,6 +99,35 @@ STATUS_REVIEW_INACTIVE = {
     "don't know what this is",
 }
 
+# ---- Human review decisions (from the team's filled-in Review tab, 2026-07-19).
+# Encoded here so the generator reproduces the human-decided state exactly; the
+# workbook stays script-reproducible through the Step 3 build-out. Only decisions
+# that change a cell value live here - confirmations of existing state don't.
+REVIEW_DECISIONS = {
+    # (person, project) -> Active? flag, an explicit per-person involvement call
+    ("Patch", "MIF_1"): ("Active", "Active - confirmed by review 2026-07-19 (user: yes)"),
+    ("Patch", "CLS_1"): ("Inactive", "Inactive - confirmed by review 2026-07-19 (user: no)"),
+}
+# What the team wrote in the yellow decision column, echoed back on the Review tab
+# next to each of the 7 shortlist items so the tab records the resolution.
+DECISION_TEXT = {
+    "kyle": "Kyle Kidd on CopiaAdHoc_1 (per review). Note: the Summary tab held "
+            "no involvement status for any of these 5, so nothing needed applying "
+            "- both Kyles stay Active per the register. Which Kyle on Dorsia_1 / "
+            "Gateway_3 / Guardian_3 / Shika_1: still open.",
+    "dates": "No start/end dates yet (per review). Deals keep counting in every "
+             "week until dates are added; the Step 3 phase curve activates then.",
+    "leveldefault": "Kept directional placeholders. The user's '40 h/wk' answer is "
+                    "the weekly CAPACITY (applied below); a 40 h/wk-per-deal default "
+                    "would over-allocate massively. Step 3 archetype templates now "
+                    "drive per-level hours - tune those instead.",
+    "prob": "Semantics confirmed: probability = chance the proposal converts to WIP. "
+            "Kept the 50% default pending per-proposal estimates.",
+    "capacity": "Confirmed 40 h/wk per person (real, no longer a placeholder).",
+    "cls": "Patch INACTIVE on CLS_1 (user: no) - applied.",
+    "mif": "Patch ACTIVE on MIF_1 (user: yes) - applied.",
+}
+
 # ---------------------------------------------------------------- styling
 
 ARIAL = "Arial"
@@ -329,6 +358,12 @@ def extract(src):
             rec["active"] = "Inactive"
             rec["note"] = (rec["note"] + "; " if rec["note"] else "") + \
                 f"Deal lifecycle is {deals[c]['life']}"
+
+    # human review decisions win last (authoritative over any auto-derivation)
+    for (person, proj), (flag, note) in REVIEW_DECISIONS.items():
+        if (person, proj) in assigns:
+            assigns[(person, proj)]["active"] = flag
+            assigns[(person, proj)]["note"] = note
     return deals, assigns, review, applied
 
 
@@ -718,14 +753,36 @@ def build(deals, assigns, review, out_path):
     resolved = sorted((it for it in all_items if it[0] not in NEEDS_DECISION),
                       key=lambda x: x[0])
 
+    def decision_for(topic, proj):
+        """The team's recorded answer for a shortlist item (2026-07-19 review)."""
+        if topic == "Ambiguous 'Kyle' rows skipped":
+            return DECISION_TEXT["kyle"], False
+        if topic == "Deal dates blank":
+            return DECISION_TEXT["dates"], False
+        if topic == "Level-default hours are placeholders":
+            return DECISION_TEXT["leveldefault"], True      # still partly open
+        if topic == "Proposal probabilities defaulted":
+            return DECISION_TEXT["prob"], True               # values still to come
+        if topic == "Weekly capacity is a placeholder":
+            return DECISION_TEXT["capacity"], False
+        if topic == "Unclear personal status" and proj == "CLS_1":
+            return DECISION_TEXT["cls"], False
+        if topic == "Unclear personal status" and proj == "MIF_1":
+            return DECISION_TEXT["mif"], False
+        return None, True
+
     r = 5
-    wcell(rv, r, 1, f"1) NEEDS YOUR DECISION  ({len(needs)} items)  -  "
-                    f"fill the yellow column", F_BOLD, FILL_YELLOW)
+    wcell(rv, r, 1, f"1) REVIEWED 2026-07-19  ({len(needs)} items)  -  team's "
+                    f"answer in the last column; amber = still partly open",
+          F_BOLD, FILL_YELLOW)
     r += 1
     for topic, person, proj, detail, action in needs:
         for ci, v in enumerate([topic, person, proj, detail, action], start=1):
             wcell(rv, r, ci, v, align=Alignment(wrap_text=True, vertical="top"))
-        wcell(rv, r, 6, None, F_INPUT, FILL_YELLOW)
+        ans, still_open = decision_for(topic, proj)
+        wcell(rv, r, 6, ans, F_INPUT if still_open else F_BODY,
+              FILL_AMBER if still_open else None,
+              align=Alignment(wrap_text=True, vertical="top"))
         r += 1
     r += 1
     wcell(rv, r, 1, f"2) RESOLVED FROM SOURCE DATA  ({len(resolved)} items)  -  "
