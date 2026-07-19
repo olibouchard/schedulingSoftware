@@ -40,7 +40,7 @@ Seven tabs. This is the contract every later step builds on — don't restructur
 | **Guide** | How to use, color legend, baked-in assumptions | — |
 | **Capacity** | Person × week heatmap of planned hours; the dashboard | A person · B capacity · C+ 26 weekly columns; Team planned / capacity / headroom rows below; red > capacity, amber > 85% |
 | **Deals** | One row per engagement | A Project ID · B client as filed · C primary client · D end client · E referral? · F lifecycle · G phase · H probability · I/J expected start/end · K–P attributes (txn type, entity class, scope, industry, complexity, timeline) · Q # staffed (formula) · R planned hrs/wk (formula) · S source status · T notes |
-| **Assignments** | One row per person × deal; the staffing ledger | A person · B roster level (formula) · C project ID · D client (f) · E deal lifecycle (f) · F staffed-as level · G **Active?** · H override hrs/wk · I planned hrs/wk used (f: override, else level default) · J deal probability (f) · K weighted hrs/wk (f) · L/M deal start/end (f) · N source status · O notes |
+| **Assignments** | One row per person × deal; the staffing ledger | A person · B roster level (formula) · C project ID · D client (f) · E deal lifecycle (f) · F staffed-as level · G **Active?** · H override hrs/wk · I planned hrs/wk used (f: override, else level default) · J deal probability (f) · K weighted hrs/wk (f) · L/M deal start/end (f) · N/O effective start/end (f, calculation helpers — sentinel dates when L/M blank, see §7) · P source status · Q notes |
 | **Roster** | Team list | A person · B level · C specialty · D weekly capacity hrs · E active assignments (f) · F committed hrs/wk (f) · G utilization (f, CF flags) |
 | **Settings** | All knobs | B3 capacity window start (Monday) · B4 probability-weighting toggle Yes/No · B8:B14 default hrs/wk by level (placeholders) · columns D–L: dropdown source lists (named ranges) |
 | **Review** | Migration items needing sign-off + the status-mapping table | Topic / person / project / detail / suggested action / **your decision** (yellow) |
@@ -135,14 +135,32 @@ Only if the team asks for it after using the tracker: scenario override columns 
 
 ## 7. Technical notes for implementers (hard-won, read before writing formulas)
 
-- **Bounded ranges only.** Whole-column references (`Assignments!$A:$A`) stalled LibreOffice recalc past 120 s on this workbook; bounded (`$A$2:$A$721`) is the standard. Extents: Deals rows 2–354, Assignments rows 2–721, Roster rows 2–40 — spare rows are pre-filled with guarded formulas (`IF($A2="","",…)`).
+- **Bounded ranges only.** Whole-column references (`Assignments!$A:$A`) are far too slow to evaluate at this workbook's size; bounded (`$A$2:$A$769`) is the standard. Current extents: Deals rows 2–355, Assignments rows 2–769, Roster rows 2–40 — spare rows are pre-filled with guarded formulas (`IF($A2="","",…)`).
 - **Function whitelist:** Excel-2007-era only — SUMIFS/COUNTIFS/SUMPRODUCT/INDEX/MATCH/IFERROR. No XLOOKUP, FILTER, SORT, UNIQUE, SEQUENCE (they break the LibreOffice verification harness and older Excel). If TEXTJOIN/IFS/SWITCH/MAXIFS/MINIFS are ever needed, write them as `_xlfn.TEXTJOIN(…)` etc.
-- **Blank-date OR-trick:** the capacity window test is `((start<=week)+(start=""))*((end>=week)+(end=""))` inside SUMPRODUCT. It relies on helper cells returning `""` (a string) — a **truly empty** cell compares as 0 and would double-count. That's why every row in the formula extent carries a guarded formula; don't clear those cells, and don't shrink SUMPRODUCT ranges past rows that lack them.
-- **Numeric helpers must yield 0, not ""**, anywhere they're multiplied in SUMPRODUCT (text → #VALUE!).
+- **Capacity uses SUMIFS against sentinel-date helper columns, not SUMPRODUCT.** `Assignments!N/O` ("Eff. start/end") mirror `L/M` (Deal start/end) but substitute `DATE(1900,1,1)` / `DATE(2100,12,31)` when blank, so `Capacity!<cell> = SUMIFS(Assignments!$K$2:$K$769, Assignments!$A$2:$A$769, person, Assignments!$G$2:$G$769, "Active", Assignments!$N$2:$N$769, "<="&week, Assignments!$O$2:$O$769, ">="&week)`. An earlier SUMPRODUCT version (5 multiplied boolean arrays × 768 rows × 1,014 cells) was functionally fine but too slow to verify at all in some environments (see next bullet) — SUMIFS against pre-resolved sentinel columns is both correct and fast, and is the pattern to extend if Step 3 adds more time-phased math.
+- **`INDEX`/`MATCH` into a genuinely blank cell returns the number `0`, not `""`.** This bit us directly: `Assignments!L` (deal start) does `INDEX(Deals!$I..., MATCH(...))`, and since every migrated deal has a blank `Deals!Expected start`, every `L` cell silently evaluated to `0` — not blank. The `N = IF(L="", DATE(1900,1,1), L)` sentinel guard never fired (0 ≠ ""), so `N` became `0` too, which fails `>=week` for every real week and **zeroed out the entire Capacity view**. It was caught only by independently hand-computing expected values and diffing against the sheet — a clean recalc (no `#REF!`/`#VALUE!`) would never have flagged it, since 0 is a valid number. Fixed via `safe_lookup()` in `build_workbook.py`, which treats a found-but-zero result the same as not-found. **Any new `INDEX`/`MATCH` pulling from a column that can legitimately be blank (dates, free-text fields) must use this pattern** — wrap the lookup so a `0` result collapses to `""`, don't just guard the pre-lookup blank check.
 - **Data validation uses named ranges** (`RosterNames`, `DealCodes`, `LifecycleList`, …) — portable across Excel versions and LibreOffice, unlike direct cross-sheet DV references.
 - **Heatmap zero-hiding** via number format `0.0;-0.0;` keeps the grid readable.
 - The probability toggle flows through exactly one choke point: `Assignments!K`. Change weighting logic there only.
 - Dates are hardcoded inputs (window start = Settings!B3), never `TODAY()`/`NOW()` — volatile functions would make recalc results shift between sessions.
+
+### Verification: recalc.py may not work in your sandbox — have a fallback ready
+
+The xlsx skill's `recalc.py` (LibreOffice headless) **hung indefinitely in this session's container**, reproducibly, even on a trivial one-formula file — confirmed to be an environment issue (near-zero CPU consumed across 5-minute hangs; a fresh/cold LibreOffice profile is the trigger, confirmed via direct `soffice` invocation outside Python's `subprocess`, and even `--convert-to` — a code path with no macro involved at all — failed the same way). This is very likely container-specific, not universal — **try `recalc.py` first, with a real timeout (≥300s)**, before assuming it's broken for you too.
+
+If it hangs or errors out, the fallback that worked cleanly here: `pip install formulas` (pure-Python Excel engine, no LibreOffice dependency). It loaded and calculated this entire workbook (16,613 cells) in under a minute:
+
+```python
+import formulas
+xl = formulas.ExcelModel().loads("workbook/<file>.xlsx").finish()
+sol = xl.calculate()
+# keys look like "'[<FILENAME-EXACT-CASE>.xlsx]<SHEETNAME-UPPER>'!<CELL-UPPER>"
+# sol[key].value is usually a 1x1 array — unwrap with .ravel().tolist()[0]
+```
+
+Scan `sol` for the standard error tokens (`#VALUE!`, `#REF!`, `#NAME?`, `#DIV/0!`, `#NULL!`, `#NUM!`, `#N/A`) the same way `recalc.py` would. **This does not bake cached values into the delivered `.xlsx`** (unlike `recalc.py`, which rewrites the file in place) — the file still opens with formulas uncalculated until Excel/LibreOffice computes them on open (standard, automatic behavior for any real user opening it; only automated tools reading `data_only=True` without opening the file first would see blanks). If baked-in cached values turn out to matter for a later step, that's an open problem — `formulas` doesn't write back, and `recalc.py` is what actually rewrites the file.
+
+Whichever engine passes, **a clean run only proves formulas evaluate without error — it does not prove they're right** (the blank-lookup bug above produced zero errors and silently wrong numbers). Always pair it with independent hand-computation on 3–4 sampled cells from the raw input data, not from the formulas themselves — and if a feature has never been exercised by the actual data (e.g., date-phased capacity, when every migrated deal has blank dates), test it separately on a throwaway scratch copy with synthetic values rather than trusting that "no errors" means "this code path works."
 
 ## 8. Governance (how the team runs it)
 

@@ -6,7 +6,7 @@ An Excel-based scheduling and capacity tracker for Leo Berwick's US M&A Tax team
 
 **Read `PLAN.md` before doing anything.** §4 is the workbook spec (tab/column contract), §5 the step roadmap, §6 working agreements, §7 technical notes. Follow the step protocol below — one step per session, hard stop after delivery.
 
-**Current status:** Step 1 in progress — `scripts/build_workbook.py` runs end-to-end (313 deals, 687 assignments, 209 personal statuses, 32 review items) but recalc verification has not yet passed. Whole-column refs were replaced with bounded ranges after stalling LibreOffice; re-verify from scratch.
+**Current status:** Step 1 delivered and verified (`workbook/US_MA_Tax_Scheduling_Tracker_v2_2026-07-19.xlsx`) — 313 deals, 687 assignments, 209 personal statuses, 32 review items; 0 formula errors across 16,613 cells; rollup and time-phasing formulas independently confirmed correct. **Waiting on the user before Step 2** (Step 2 needs the team's Review-tab decisions + real data first). `recalc.py` (LibreOffice) does not work in this session's sandbox — see PLAN.md §7's verification fallback (the `formulas` Python package) before assuming a step is blocked on that account.
 *(Update this line in the same commit whenever a step completes.)*
 
 ## Repo map
@@ -26,7 +26,7 @@ An Excel-based scheduling and capacity tracker for Leo Berwick's US M&A Tax team
 
 1. **Load the `xlsx` skill before touching any workbook.** `openpyxl`/`pandas` may need `pip install` in a fresh container.
 2. **Never regenerate the workbook after Step 2.** Edit in place (load *without* `data_only=True`, preserve formulas), and save a dated copy before editing.
-3. **Verify before delivering:** run the xlsx skill's `recalc.py` with timeout ≥ 300 s until **zero formula errors**, then hand spot-check 2–3 computed values (e.g., one person's committed hrs/wk vs a manual count of their Assignments rows; one Capacity cell). A clean recalc proves formulas evaluate, not that they're right.
+3. **Verify before delivering:** run the xlsx skill's `recalc.py` with timeout ≥ 300 s until **zero formula errors**. If it hangs/fails in your sandbox (it did in this one — see PLAN.md §7), fall back to `pip install formulas` (pure-Python, no LibreOffice) the same way that section documents. Either way, a clean run only proves formulas *evaluate* — always also hand spot-check 3–4 computed values against an independent recomputation from the raw input data (not from the formulas themselves), and if a feature has never been exercised by the actual data (e.g., date-phased capacity when every current deal has blank dates), test it separately on a throwaway scratch copy with synthetic values. This is not optional box-checking: Step 1 shipped a bug (§7) that produced zero formula errors and silently zeroed the entire Capacity view, caught only by this kind of independent check.
 4. **Never invent business numbers silently.** Placeholders (hours, capacities, probabilities, template values) get blue text + yellow fill + a Review-tab item.
 5. **Nothing is deleted in migrations or edits** — rows get flagged (Inactive, grey, Review item), not removed. Preserve the raw source text columns.
 6. Don't touch `Assignments!K` weighting logic except deliberately — it is the single choke point for probability weighting.
@@ -34,8 +34,10 @@ An Excel-based scheduling and capacity tracker for Leo Berwick's US M&A Tax team
 ## Excel engineering constraints
 
 - **Functions:** Excel-2007-era only — SUMIFS, COUNTIFS, SUMPRODUCT, INDEX, MATCH, IFERROR. **Never** XLOOKUP, FILTER, SORT, UNIQUE, SEQUENCE (they break the LibreOffice verification harness and older clients). TEXTJOIN/IFS/SWITCH/MAXIFS/MINIFS only with the `_xlfn.` prefix.
-- **Bounded ranges only.** Whole-column refs (`$A:$A`) stalled LibreOffice recalc past 120 s on this workbook. Current extents: Deals 2–354, Assignments 2–721, Roster 2–40.
-- **Guarded spare rows are load-bearing.** Every row inside a formula extent carries `IF($A2="","",…)` formulas. The capacity window test `((start<=wk)+(start=""))*((end>=wk)+(end=""))` relies on helpers returning the *string* `""` — a truly empty cell compares as 0 and double-counts. Don't clear those cells; don't shrink SUMPRODUCT ranges past them. Numeric helpers must return 0 (never `""`) anywhere SUMPRODUCT multiplies them.
+- **Bounded ranges only.** Whole-column refs (`$A:$A`) are too slow at this size. Current extents: Deals 2–355, Assignments 2–769, Roster 2–40.
+- **Guarded spare rows are load-bearing.** Every row inside a formula extent carries `IF($A2="","",…)` formulas — don't clear those cells or shrink ranges past them.
+- **Capacity is SUMIFS against sentinel-date helper columns** (`Assignments!N/O`, "Eff. start/end" — mirror `L/M` but substitute 1900-01-01/2100-12-31 when blank), not SUMPRODUCT. See PLAN.md §7 if extending this.
+- **`INDEX`/`MATCH` into a blank cell returns `0`, not `""`.** Any lookup pulling from a column that can legitimately be blank (dates, free-text) must collapse a found-but-zero result to `""` (see `safe_lookup()` in `build_workbook.py`) — a plain `IF(result="",...)` guard on the caller side will not catch it, and this class of bug produces zero formula errors while being silently wrong. This exact bug shipped once in Step 1 (zeroed the whole Capacity view) before independent verification caught it.
 - **No volatile functions** (`TODAY()`, `NOW()`) — results must not shift between sessions. The capacity window start is the input at `Settings!B3`.
 - **Dropdowns via named ranges** (`RosterNames`, `DealCodes`, `LifecycleList`, `PhaseList`, `TxnTypeList`, `EntityClassList`, `ScopeList`, `TimelineList`, `ActiveList`, `YesNoList`, `LevelList`) — portable, unlike direct cross-sheet DV refs.
 - **Formatting:** Arial 10 throughout. Color code — blue text = input · black = formula · green = cross-sheet pull · yellow fill = fill/review this · grey row = inactive. Heatmap hides zeros via number format `0.0;-0.0;`. Dates `yyyy-mm-dd`, probabilities `0%` stored as fractions.

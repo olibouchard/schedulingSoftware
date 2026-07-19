@@ -289,6 +289,16 @@ def extract(src):
     return deals, assigns, review, applied
 
 
+def safe_lookup(rr, last_d, src_range, notfound='""'):
+    """INDEX/MATCH into Deals by Assignments!$C{rr} (project ID) that treats
+    both 'not found' and 'found but the source cell is blank' as blank.
+    Excel/Calc's INDEX returns the number 0 for a truly empty referenced
+    cell, not "" - left unguarded, blank Deals dates/client cells would
+    read back as 0 (a fake epoch date, or a literal "0" client name)."""
+    idx = f'INDEX({src_range},MATCH($C{rr},Deals!$A$2:$A${last_d},0))'
+    return (f'=IF($C{rr}="","",IFERROR(IF({idx}=0,"",{idx}),{notfound}))')
+
+
 # ---------------------------------------------------------------- helpers
 
 
@@ -512,9 +522,9 @@ def build(deals, assigns, review, out_path):
     hdr = ["Person", "Level (roster)", "Project ID", "Client", "Deal lifecycle",
            "Staffed as", "Active?", "Override hrs/wk", "Planned hrs/wk (used)",
            "Deal probability", "Weighted hrs/wk", "Deal start", "Deal end",
-           "Source status (Jul 9)", "Notes"]
+           "Eff. start (calc)", "Eff. end (calc)", "Source status (Jul 9)", "Notes"]
     style_header(wa, 1, hdr, [16, 16, 24, 26, 12, 16, 10, 10, 10, 10, 10, 11, 11,
-                              24, 34])
+                              11, 11, 24, 34])
     rows = [dict(person="Tania", code="EXAMPLE_0", staffed_as="Partner",
                  active="Inactive", raw="",
                  note="EXAMPLE row - Inactive so it counts nowhere; delete "
@@ -527,14 +537,14 @@ def build(deals, assigns, review, out_path):
         wcell(wa, r, 7, a["active"], F_INPUT)
         if a["code"] == "EXAMPLE_0":
             wcell(wa, r, 8, 6, F_INPUT, fmt="0.0")
-        wcell(wa, r, 14, a["raw"])
-        wcell(wa, r, 15, a["note"], F_NOTE if "EXAMPLE" in a["note"] else F_BODY)
+        wcell(wa, r, 16, a["raw"])
+        wcell(wa, r, 17, a["note"], F_NOTE if "EXAMPLE" in a["note"] else F_BODY)
         r += 1
     for rr in range(2, LAST_A + 1):
         wcell(wa, rr, 2, f'=IF($A{rr}="","",IFERROR(INDEX(Roster!$B$2:$B${ROSTER_LAST},'
                          f'MATCH($A{rr},Roster!$A$2:$A${ROSTER_LAST},0)),"?"))', F_LINK)
-        wcell(wa, rr, 4, f'=IF($C{rr}="","",IFERROR(INDEX(Deals!$C$2:$C${LAST_D},'
-                         f'MATCH($C{rr},Deals!$A$2:$A${LAST_D},0)),"?"))', F_LINK)
+        wcell(wa, rr, 4, safe_lookup(rr, LAST_D, f'Deals!$C$2:$C${LAST_D}', '"?"'),
+              F_LINK)
         wcell(wa, rr, 5, f'=IF($C{rr}="","",IFERROR(INDEX(Deals!$F$2:$F${LAST_D},'
                          f'MATCH($C{rr},Deals!$A$2:$A${LAST_D},0)),"?"))', F_LINK)
         wcell(wa, rr, 9, f'=IF(OR($A{rr}="",$G{rr}<>"Active"),0,IF($H{rr}<>"",'
@@ -546,17 +556,19 @@ def build(deals, assigns, review, out_path):
               fmt="0%")
         wcell(wa, rr, 11, f'=IF(Settings!$B$4="Yes",$I{rr}*$J{rr},$I{rr})',
               F_BODY, fmt="0.0")
-        wcell(wa, rr, 12, f'=IF($C{rr}="","",IFERROR(INDEX(Deals!$I$2:$I${LAST_D},'
-                          f'MATCH($C{rr},Deals!$A$2:$A${LAST_D},0)),""))', F_LINK,
+        wcell(wa, rr, 12, safe_lookup(rr, LAST_D, f'Deals!$I$2:$I${LAST_D}'),
+              F_LINK, fmt="yyyy-mm-dd")
+        wcell(wa, rr, 13, safe_lookup(rr, LAST_D, f'Deals!$J$2:$J${LAST_D}'),
+              F_LINK, fmt="yyyy-mm-dd")
+        wcell(wa, rr, 14, f'=IF($L{rr}="",DATE(1900,1,1),$L{rr})', F_BODY,
               fmt="yyyy-mm-dd")
-        wcell(wa, rr, 13, f'=IF($C{rr}="","",IFERROR(INDEX(Deals!$J$2:$J${LAST_D},'
-                          f'MATCH($C{rr},Deals!$A$2:$A${LAST_D},0)),""))', F_LINK,
+        wcell(wa, rr, 15, f'=IF($M{rr}="",DATE(2100,12,31),$M{rr})', F_BODY,
               fmt="yyyy-mm-dd")
-        for ccol in range(1, 16):
+        for ccol in range(1, 18):
             wa.cell(row=rr, column=ccol).border = THIN_BTM
     wa.freeze_panes = "D2"
     wa.conditional_formatting.add(
-        f"A2:O{LAST_A}",
+        f"A2:Q{LAST_A}",
         FormulaRule(formula=['$G2="Inactive"'], fill=FILL_GREY))
     for col, name in [("A", "RosterNames"), ("C", "DealCodes"),
                       ("F", "LevelList"), ("G", "ActiveList")]:
@@ -590,12 +602,11 @@ def build(deals, assigns, review, out_path):
         for w in range(N_WEEKS):
             col = 3 + w
             L = get_column_letter(col)
-            f = (f'=IF($A{rr}="","",SUMPRODUCT('
-                 f'(Assignments!$A$2:$A${LAST_A}=$A{rr})*'
-                 f'(Assignments!$G$2:$G${LAST_A}="Active")*'
-                 f'((Assignments!$L$2:$L${LAST_A}<={L}$4)+(Assignments!$L$2:$L${LAST_A}=""))*'
-                 f'((Assignments!$M$2:$M${LAST_A}>={L}$4)+(Assignments!$M$2:$M${LAST_A}=""))*'
-                 f'Assignments!$K$2:$K${LAST_A}))')
+            f = (f'=IF($A{rr}="","",SUMIFS(Assignments!$K$2:$K${LAST_A},'
+                 f'Assignments!$A$2:$A${LAST_A},$A{rr},'
+                 f'Assignments!$G$2:$G${LAST_A},"Active",'
+                 f'Assignments!$N$2:$N${LAST_A},"<="&{L}$4,'
+                 f'Assignments!$O$2:$O${LAST_A},">="&{L}$4))')
             wcell(cap, rr, col, f, F_BODY, fmt="0.0;-0.0;")
     lastw = get_column_letter(2 + N_WEEKS)
     trow = last_p + 2
@@ -687,7 +698,9 @@ def build(deals, assigns, review, out_path):
          "deal attributes (dropdowns).", F_BODY),
         ("  Assignments - one row per person on a deal. 'Active?' controls "
          "whether it counts. Hours come from the level default unless you set "
-         "an Override.", F_BODY),
+         "an Override. Columns N/O ('Eff. start/end') are calculation helpers "
+         "that let Capacity add up fast - leave them alone, they just mirror "
+         "columns L/M with a placeholder date when those are blank.", F_BODY),
         ("  Roster - the team, weekly capacity, live utilization.", F_BODY),
         ("  Settings - dropdown lists, level hour defaults, capacity window "
          "start, probability-weighting toggle.", F_BODY),
