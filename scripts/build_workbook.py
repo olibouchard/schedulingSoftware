@@ -78,6 +78,46 @@ PROB_ACTIVE, PROB_PROPOSAL = 1.0, 0.5   # prefill; proposals to be reviewed
 N_WEEKS = 26
 SPARE_DEALS, SPARE_ASSIGN, ROSTER_LAST = 40, 80, 40
 
+# ---- Step 3: effort templates (deal archetypes). All numbers are PLACEHOLDERS
+# (directional, from the July 9 staffing shape + the email's effort drivers) to
+# be tuned in the template workshop. Each archetype gives an hrs/wk-per-person
+# rate BY LEVEL while actively on the deal, a typical duration, and a 2-phase
+# shape: a front "diligence/heavy" phase of length `f` x duration at intensity
+# `m1`, then a lighter tail at `m2`. m2 is derived so the duration-weighted
+# average intensity is 1.0 (phasing redistributes hours over time, it does not
+# add or remove them). Levels are keyed exactly as the roster levels.
+TEMPLATE_LEVELS = ["Partner", "MD", "Director", "VP", "Senior Associate",
+                   "Renewable Specialist", "Associate"]
+_ARCH = [
+    # name, {level: hrs/wk}, duration_wk, f (front fraction), m1 (front intensity)
+    ("Buy-side TDD (corp / stock)",
+     dict(Partner=2, MD=3, Director=5, VP=10, SA=14, Assoc=16, Ren=0), 10, 0.5, 1.4),
+    ("Buy-side TDD + Structuring",
+     dict(Partner=3, MD=4, Director=6, VP=12, SA=16, Assoc=18, Ren=0), 14, 0.45, 1.35),
+    ("Sell-side / VDD",
+     dict(Partner=2, MD=3, Director=5, VP=9, SA=12, Assoc=14, Ren=0), 10, 0.5, 1.3),
+    ("Structuring only (back-loaded)",
+     dict(Partner=3, MD=5, Director=8, VP=10, SA=10, Assoc=8, Ren=0), 8, 0.5, 0.7),
+    ("Tax equity / PW&A (renewable)",
+     dict(Partner=1, MD=2, Director=3, VP=4, SA=4, Assoc=2, Ren=6), 6, 0.5, 1.2),
+    ("FIRPTA / cross-border",
+     dict(Partner=2, MD=3, Director=4, VP=6, SA=8, Assoc=8, Ren=0), 6, 0.5, 1.2),
+    ("Modeling / QoT support",
+     dict(Partner=1, MD=2, Director=3, VP=6, SA=10, Assoc=12, Ren=0), 6, 0.5, 1.0),
+    ("Ad-hoc / advisory (light)",
+     dict(Partner=1, MD=1, Director=2, VP=3, SA=4, Assoc=4, Ren=2), 4, 0.5, 1.0),
+]
+_LK = ["Partner", "MD", "Director", "VP", "SA", "Ren", "Assoc"]  # dict keys, order = TEMPLATE_LEVELS
+
+
+def _archetypes():
+    """Expand _ARCH into rows: (name, [hrs by TEMPLATE_LEVELS], dur, f, m1, m2)."""
+    out = []
+    for name, hrs, dur, f, m1 in _ARCH:
+        m2 = round((1 - f * m1) / (1 - f), 4)          # conserve avg intensity = 1
+        out.append((name, [hrs[k] for k in _LK], dur, f, m1, m2))
+    return out
+
 # Per-person engagement status (Summary tab) -> assignment Active/Inactive
 STATUS_ACTIVE = {
     "ongoing", "ongoing / jeremy", "ongoing ad-hod", "ongoing--close to invoicing",
@@ -415,11 +455,12 @@ def build(deals, assigns, review, out_path):
     wd = wb.create_sheet("Deals")
     wa = wb.create_sheet("Assignments")
     wr = wb.create_sheet("Roster")
+    tpl = wb.create_sheet("Templates")
     st = wb.create_sheet("Settings")
     rv = wb.create_sheet("Review")
     for sheet, color in [(guide, "808080"), (cap, "2E7D32"), (wd, "1F4E79"),
-                         (wa, "1F4E79"), (wr, "1F4E79"), (st, "BF8F00"),
-                         (rv, "C00000")]:
+                         (wa, "1F4E79"), (wr, "1F4E79"), (tpl, "7030A0"),
+                         (st, "BF8F00"), (rv, "C00000")]:
         sheet.sheet_properties.tabColor = color
 
     deal_rows = sorted(deals.values(), key=lambda d: (LIFE_RANK[d["life"]],
@@ -482,9 +523,40 @@ def build(deals, assigns, review, out_path):
         "ActiveList": "Settings!$J$8:$J$9",
         "YesNoList": "Settings!$K$8:$K$9",
         "LevelList": f"Settings!$L$8:$L${7+len(LEVELS)}",
+        "ArchetypeList": f"Templates!$A$3:$A${2+len(_ARCH)}",
     }
     for nm, ref in names.items():
         wb.defined_names[nm] = DefinedName(nm, attr_text=ref)
+
+    # ---------------- Templates (Step 3: effort archetypes)
+    TN = 2 + len(_ARCH)                                   # last archetype row
+    arch = _archetypes()
+    wcell(tpl, 1, 1, "Effort templates - hrs/wk per person by level, + phase shape",
+          F_TITLE)
+    tpl_hdr = ["Archetype"] + TEMPLATE_LEVELS + \
+        ["Typical duration (wks)", "Front phase fraction",
+         "Front intensity (x)", "Tail intensity (x)"]
+    style_header(tpl, 2, tpl_hdr,
+                 [30, 9, 7, 9, 7, 15, 9, 12, 12, 12, 12])
+    for i, (name, hrs, dur, f, m1, m2) in enumerate(arch, start=3):
+        wcell(tpl, i, 1, name, F_BODY)
+        for j, h in enumerate(hrs, start=2):             # B..H hrs by level
+            wcell(tpl, i, j, h, F_INPUT, FILL_YELLOW, "0.0")
+        wcell(tpl, i, 9, dur, F_INPUT, FILL_YELLOW, "0")
+        wcell(tpl, i, 10, f, F_INPUT, FILL_YELLOW, "0%")
+        wcell(tpl, i, 11, m1, F_INPUT, FILL_YELLOW, "0.00")
+        wcell(tpl, i, 12, f'=IF((1-$J{i})=0,1,(1-$J{i}*$K{i})/(1-$J{i}))',
+              F_BODY, fmt="0.00")                          # m2 conserves avg=1
+    note_row = TN + 2
+    wcell(tpl, note_row, 1,
+          "All hrs/wk and phase numbers are PLACEHOLDERS (yellow) - tune in the "
+          "template workshop. Each deal on the Deals tab picks an Archetype; its "
+          "per-level hrs/wk then drive that deal's assignments (an Override on an "
+          "assignment still wins). Front intensity x tail, weighted by phase "
+          "length, averages to 1.0, so phasing only redistributes hours across a "
+          "deal's timeline - it never changes the total. Tail intensity is a "
+          "formula (leave it); it is what keeps the average at 1.0.", F_NOTE)
+    tpl.freeze_panes = "B3"
 
     # ---------------- Roster
     style_header(wr, 1, ["Person", "Level", "Specialty", "Weekly capacity (hrs)",
@@ -537,9 +609,10 @@ def build(deals, assigns, review, out_path):
            "Probability", "Expected start", "Expected end", "Transaction type",
            "Entity classification", "Scope", "Industry", "Complexity flags",
            "Timeline", "# staffed", "Planned hrs/wk", "Source status (Jul 9)",
-           "Notes"]
+           "Notes", "Effort archetype", "Front x (calc)", "Tail x (calc)",
+           "Front frac (calc)", "Phase split date (calc)"]
     style_header(wd, 1, hdr, [22, 38, 26, 22, 8, 14, 13, 10, 11, 11, 13, 13, 14,
-                              14, 16, 11, 8, 10, 16, 30])
+                              14, 16, 11, 8, 10, 16, 30, 26, 10, 10, 10, 14])
     example = dict(code="EXAMPLE_0", client="Example Client LLC : Example Target",
                    primary="Example Client LLC", end="Example Target",
                    referral="No", life="Active", source="(example)")
@@ -572,7 +645,15 @@ def build(deals, assigns, review, out_path):
         if is_ex:
             wcell(wd, r, 20, "EXAMPLE row - shows the expected formats; delete "
                              "any time. Nobody is staffed on it.", F_NOTE)
+            wcell(wd, r, 21, "Buy-side TDD + Structuring", F_INPUT)
+        else:
+            wcell(wd, r, 21, None, F_INPUT,
+                  FILL_YELLOW if live else None)          # Archetype (pick one)
         r += 1
+    # archetype lookups: front x (V), tail x (W), front frac (X) from Templates;
+    # phase split date (Y) = start + frac*(end-start), only when BOTH dates and an
+    # archetype are set (otherwise "" -> assignment phasing stays flat).
+    mrow = f'MATCH($U{{rr}},Templates!$A$3:$A${TN},0)'
     for rr in range(2, LAST_D + 1):
         wcell(wd, rr, 17, f'=IF($A{rr}="","",COUNTIFS(Assignments!$C$2:$C${LAST_A},'
                           f'$A{rr},Assignments!$G$2:$G${LAST_A},"Active"))',
@@ -581,17 +662,27 @@ def build(deals, assigns, review, out_path):
                           f'Assignments!$C$2:$C${LAST_A},$A{rr},'
                           f'Assignments!$G$2:$G${LAST_A},"Active"))',
               F_BODY, fmt="0.0")
-        for ccol in range(1, 21):
+        m = mrow.format(rr=rr)
+        wcell(wd, rr, 22, f'=IF($U{rr}="","",IFERROR(INDEX(Templates!$K$3:$K${TN},'
+                          f'{m}),""))', F_LINK, fmt="0.00")           # front x
+        wcell(wd, rr, 23, f'=IF($U{rr}="","",IFERROR(INDEX(Templates!$L$3:$L${TN},'
+                          f'{m}),""))', F_LINK, fmt="0.00")           # tail x
+        wcell(wd, rr, 24, f'=IF($U{rr}="","",IFERROR(INDEX(Templates!$J$3:$J${TN},'
+                          f'{m}),""))', F_LINK, fmt="0%")             # front frac
+        wcell(wd, rr, 25,
+              f'=IF(OR($U{rr}="",$I{rr}="",$J{rr}="",$X{rr}=""),"",'
+              f'$I{rr}+$X{rr}*($J{rr}-$I{rr}))', F_BODY, fmt="yyyy-mm-dd")
+        for ccol in range(1, 26):
             wd.cell(row=rr, column=ccol).border = THIN_BTM
     wd.freeze_panes = "B2"
     wd.conditional_formatting.add(
-        f"A2:T{LAST_D}",
+        f"A2:Y{LAST_D}",
         FormulaRule(formula=['OR($F2="Dead",$F2="Closed",$F2="Invoiced")'],
                     fill=FILL_GREY))
     for col, name in [("F", "LifecycleList"), ("G", "PhaseList"),
                       ("K", "TxnTypeList"), ("L", "EntityClassList"),
                       ("M", "ScopeList"), ("P", "TimelineList"),
-                      ("E", "YesNoList")]:
+                      ("E", "YesNoList"), ("U", "ArchetypeList")]:
         dv = DataValidation(type="list", formula1=name, allow_blank=True)
         wd.add_data_validation(dv)
         dv.add(f"{col}2:{col}{LAST_D}")
@@ -600,9 +691,13 @@ def build(deals, assigns, review, out_path):
     hdr = ["Person", "Level (roster)", "Project ID", "Client", "Deal lifecycle",
            "Staffed as", "Active?", "Override hrs/wk", "Planned hrs/wk (used)",
            "Deal probability", "Weighted hrs/wk", "Deal start", "Deal end",
-           "Eff. start (calc)", "Eff. end (calc)", "Source status (Jul 9)", "Notes"]
+           "Eff. start (calc)", "Eff. end (calc)", "Source status (Jul 9)", "Notes",
+           "Archetype (calc)", "Front x (calc)", "Tail x (calc)",
+           "Split date (calc)", "Seg1 start (calc)", "Seg1 end (calc)",
+           "Seg1 hrs (calc)", "Seg2 start (calc)", "Seg2 end (calc)",
+           "Seg2 hrs (calc)"]
     style_header(wa, 1, hdr, [16, 16, 24, 26, 12, 16, 10, 10, 10, 10, 10, 11, 11,
-                              11, 11, 24, 34])
+                              11, 11, 24, 34, 16, 9, 9, 11, 11, 11, 10, 11, 11, 10])
     rows = [dict(person="Tania", code="EXAMPLE_0", staffed_as="Partner",
                  active="Inactive", raw="",
                  note="EXAMPLE row - Inactive so it counts nowhere; delete "
@@ -618,16 +713,23 @@ def build(deals, assigns, review, out_path):
         wcell(wa, r, 16, a["raw"])
         wcell(wa, r, 17, a["note"], F_NOTE if "EXAMPLE" in a["note"] else F_BODY)
         r += 1
+    LD = 7 + len(DEFAULT_HOURS)
     for rr in range(2, LAST_A + 1):
+        # 2D archetype-rate lookup (row = deal archetype, col = staffed-as level)
+        arate = (f'INDEX(Templates!$B$3:$H${TN},MATCH($R{rr},Templates!$A$3:$A${TN},0),'
+                 f'MATCH($F{rr},Templates!$B$2:$H$2,0))')
+        flat = (f'IFERROR(INDEX(Settings!$B$8:$B${LD},'
+                f'MATCH($F{rr},Settings!$A$8:$A${LD},0)),0)')
         wcell(wa, rr, 2, f'=IF($A{rr}="","",IFERROR(INDEX(Roster!$B$2:$B${ROSTER_LAST},'
                          f'MATCH($A{rr},Roster!$A$2:$A${ROSTER_LAST},0)),"?"))', F_LINK)
         wcell(wa, rr, 4, safe_lookup(rr, LAST_D, f'Deals!$C$2:$C${LAST_D}', '"?"'),
               F_LINK)
         wcell(wa, rr, 5, f'=IF($C{rr}="","",IFERROR(INDEX(Deals!$F$2:$F${LAST_D},'
                          f'MATCH($C{rr},Deals!$A$2:$A${LAST_D},0)),"?"))', F_LINK)
-        wcell(wa, rr, 9, f'=IF(OR($A{rr}="",$G{rr}<>"Active"),0,IF($H{rr}<>"",'
-                         f'$H{rr},IFERROR(INDEX(Settings!$B$8:$B${7+len(DEFAULT_HOURS)},'
-                         f'MATCH($F{rr},Settings!$A$8:$A${7+len(DEFAULT_HOURS)},0)),0)))',
+        # planned hrs/wk: 0 if inactive -> Override -> archetype rate -> flat default
+        wcell(wa, rr, 9,
+              f'=IF(OR($A{rr}="",$G{rr}<>"Active"),0,IF($H{rr}<>"",$H{rr},'
+              f'IF(AND($R{rr}<>"",IFERROR({arate},0)>0),{arate},{flat})))',
               F_BODY, fmt="0.0")
         wcell(wa, rr, 10, f'=IF($C{rr}="",0,IFERROR(INDEX(Deals!$H$2:$H${LAST_D},'
                           f'MATCH($C{rr},Deals!$A$2:$A${LAST_D},0)),0))', F_LINK,
@@ -642,11 +744,34 @@ def build(deals, assigns, review, out_path):
               fmt="yyyy-mm-dd")
         wcell(wa, rr, 15, f'=IF($M{rr}="",DATE(2100,12,31),$M{rr})', F_BODY,
               fmt="yyyy-mm-dd")
-        for ccol in range(1, 18):
+        # --- Step 3 phasing helpers (calc; leave alone) ---
+        wcell(wa, rr, 18, safe_lookup(rr, LAST_D, f'Deals!$U$2:$U${LAST_D}'),
+              F_LINK)                                             # archetype
+        wcell(wa, rr, 19, f'=IFERROR(IF($U{rr}="",1,INDEX(Deals!$V$2:$V${LAST_D},'
+                          f'MATCH($C{rr},Deals!$A$2:$A${LAST_D},0))),1)', F_LINK,
+              fmt="0.00")                                         # front x (m1)
+        wcell(wa, rr, 20, f'=IFERROR(IF($U{rr}="",1,INDEX(Deals!$W$2:$W${LAST_D},'
+                          f'MATCH($C{rr},Deals!$A$2:$A${LAST_D},0))),1)', F_LINK,
+              fmt="0.00")                                         # tail x (m2)
+        wcell(wa, rr, 21, safe_lookup(rr, LAST_D, f'Deals!$Y$2:$Y${LAST_D}'),
+              F_LINK, fmt="yyyy-mm-dd")                           # split date
+        # segment 1 (front): [eff-start, split] at m1; if no split, all-time flat
+        wcell(wa, rr, 22, f'=IF($U{rr}="",DATE(1900,1,1),$N{rr})', F_BODY,
+              fmt="yyyy-mm-dd")
+        wcell(wa, rr, 23, f'=IF($U{rr}="",DATE(2100,12,31),$U{rr})', F_BODY,
+              fmt="yyyy-mm-dd")
+        wcell(wa, rr, 24, f'=IF($U{rr}="",$K{rr},$K{rr}*$S{rr})', F_BODY, fmt="0.0")
+        # segment 2 (tail): (split, eff-end] at m2; empty range when no split
+        wcell(wa, rr, 25, f'=IF($U{rr}="",DATE(2100,12,31),$U{rr}+1)', F_BODY,
+              fmt="yyyy-mm-dd")
+        wcell(wa, rr, 26, f'=IF($U{rr}="",DATE(1900,1,1),$O{rr})', F_BODY,
+              fmt="yyyy-mm-dd")
+        wcell(wa, rr, 27, f'=IF($U{rr}="",0,$K{rr}*$T{rr})', F_BODY, fmt="0.0")
+        for ccol in range(1, 28):
             wa.cell(row=rr, column=ccol).border = THIN_BTM
     wa.freeze_panes = "D2"
     wa.conditional_formatting.add(
-        f"A2:Q{LAST_A}",
+        f"A2:AA{LAST_A}",
         FormulaRule(formula=['$G2="Inactive"'], fill=FILL_GREY))
     for col, name in [("A", "RosterNames"), ("C", "DealCodes"),
                       ("F", "LevelList"), ("G", "ActiveList")]:
@@ -656,9 +781,10 @@ def build(deals, assigns, review, out_path):
 
     # ---------------- Capacity
     wcell(cap, 1, 1, "Capacity - planned hours per person per week", F_TITLE)
-    wcell(cap, 2, 1, '="Probability weighting: "&Settings!$B$4&"   |   Deals '
-                     'with no dates count in every week (fill Expected start/end '
-                     'on the Deals tab to time-phase them)"', F_NOTE)
+    wcell(cap, 2, 1, '="Probability weighting: "&Settings!$B$4&"   |   A deal '
+                     'with an Archetype + dates is time-phased (heavier during '
+                     'the front/diligence phase, lighter after); a deal missing '
+                     'either counts flat in every week."', F_NOTE)
     wcell(cap, 4, 1, "Person", F_HDR, FILL_HDR)
     wcell(cap, 4, 2, "Cap hrs/wk", F_HDR, FILL_HDR)
     cap.column_dimensions["A"].width = 16
@@ -680,11 +806,20 @@ def build(deals, assigns, review, out_path):
         for w in range(N_WEEKS):
             col = 3 + w
             L = get_column_letter(col)
-            f = (f'=IF($A{rr}="","",SUMIFS(Assignments!$K$2:$K${LAST_A},'
-                 f'Assignments!$A$2:$A${LAST_A},$A{rr},'
-                 f'Assignments!$G$2:$G${LAST_A},"Active",'
-                 f'Assignments!$N$2:$N${LAST_A},"<="&{L}$4,'
-                 f'Assignments!$O$2:$O${LAST_A},">="&{L}$4))')
+            # two SUMIFS: front-phase segment (seg1: cols V/W/X) + tail segment
+            # (seg2: cols Y/Z/AA). With no phase a row lives entirely in seg1 at
+            # its flat weighted rate, so this reduces to the old flat behaviour.
+            seg1 = (f'SUMIFS(Assignments!$X$2:$X${LAST_A},'
+                    f'Assignments!$A$2:$A${LAST_A},$A{rr},'
+                    f'Assignments!$G$2:$G${LAST_A},"Active",'
+                    f'Assignments!$V$2:$V${LAST_A},"<="&{L}$4,'
+                    f'Assignments!$W$2:$W${LAST_A},">="&{L}$4)')
+            seg2 = (f'SUMIFS(Assignments!$AA$2:$AA${LAST_A},'
+                    f'Assignments!$A$2:$A${LAST_A},$A{rr},'
+                    f'Assignments!$G$2:$G${LAST_A},"Active",'
+                    f'Assignments!$Y$2:$Y${LAST_A},"<="&{L}$4,'
+                    f'Assignments!$Z$2:$Z${LAST_A},">="&{L}$4)')
+            f = f'=IF($A{rr}="","",{seg1}+{seg2})'
             wcell(cap, rr, col, f, F_BODY, fmt="0.0;-0.0;")
     lastw = get_column_letter(2 + N_WEEKS)
     trow = last_p + 2
@@ -728,6 +863,7 @@ def build(deals, assigns, review, out_path):
         "Proposal probabilities defaulted", "Deal dates blank",
         "Weekly capacity is a placeholder",
         "Level-default hours are placeholders",
+        "Effort templates are placeholders",
     }
     blanket = [
         ("Proposal probabilities defaulted", "", "All 'Proposal' deals",
@@ -741,8 +877,12 @@ def build(deals, assigns, review, out_path):
          "Everyone is set to 40 h/wk (Roster column D)",
          "Set each person's real weekly capacity"),
         ("Level-default hours are placeholders", "", "Settings B8:B14",
-         "Hours/wk per level are directional guesses, not measured data",
-         "Tune with the team at the first check-in"),
+         "Hours/wk per level are directional guesses; used only for deals with "
+         "no archetype set", "Tune with the team, or assign archetypes instead"),
+        ("Effort templates are placeholders", "", "Templates tab",
+         "Step 3 added deal archetypes -> hrs/wk by level + a diligence/tail "
+         "phase shape. All numbers are directional placeholders.",
+         "Tune in the template workshop; then set each deal's Archetype on Deals"),
         ("Old 'Filtered Status' tab", "", "-",
          "It was a manual pivot of the per-person survey; superseded by the "
          "Assignments tab filters", "Nothing to do"),
@@ -824,11 +964,15 @@ def build(deals, assigns, review, out_path):
         ("  Deals - one row per engagement: lifecycle, probability, dates and "
          "deal attributes (dropdowns).", F_BODY),
         ("  Assignments - one row per person on a deal. 'Active?' controls "
-         "whether it counts. Hours come from the level default unless you set "
-         "an Override. Columns N/O ('Eff. start/end') are calculation helpers "
-         "that let Capacity add up fast - leave them alone, they just mirror "
-         "columns L/M with a placeholder date when those are blank.", F_BODY),
+         "whether it counts. Hours come from the deal's archetype (or the level "
+         "default if no archetype) unless you set an Override. Columns N onward "
+         "('Eff. start/end', 'Seg1/Seg2 ...') are calculation helpers that let "
+         "Capacity add up fast and phase the load - leave them alone.", F_BODY),
         ("  Roster - the team, weekly capacity, live utilization.", F_BODY),
+        ("  Templates - deal archetypes (e.g. Buy-side TDD, Structuring, Tax "
+         "equity): hrs/wk per person by level + a phase shape (heavier during "
+         "diligence, lighter after). Set a deal's 'Effort archetype' on Deals "
+         "and its assignments pick up these hours automatically.", F_BODY),
         ("  Settings - dropdown lists, level hour defaults, capacity window "
          "start, probability-weighting toggle.", F_BODY),
         ("  Review - section 1 lists what still needs a human answer (yellow "
@@ -845,8 +989,12 @@ def build(deals, assigns, review, out_path):
         ("  Add a deal: next blank row on Deals - Project ID, client, Lifecycle, "
          "Probability, dates, attributes. Then staff it on Assignments.", F_BODY),
         ("  Staff someone: new row on Assignments - pick Person and Project ID, "
-         "set Active? = Active. Hours default by level; type an Override for "
-         "this deal if needed.", F_BODY),
+         "set Active? = Active. Hours come from the deal's archetype (or the "
+         "level default); type an Override for this deal if needed.", F_BODY),
+        ("  Estimate a deal's effort: set its 'Effort archetype' on Deals (a "
+         "dropdown). Everyone staffed on it then gets that archetype's hrs/wk "
+         "for their level. Add Expected start/end and the load auto-phases - "
+         "heavier during diligence, lighter afterward.", F_BODY),
         ("  Roll someone off: set their row's Active? to Inactive (keeps "
          "history - do not delete).", F_BODY),
         ("  Deal dies / closes: set Lifecycle on Deals; its assignments stop "
