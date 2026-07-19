@@ -109,6 +109,30 @@ _ARCH = [
 ]
 _LK = ["Partner", "MD", "Director", "VP", "SA", "Ren", "Assoc"]  # dict keys, order = TEMPLATE_LEVELS
 
+# ---- Step 4: NetSuite actuals. Seed name-mapping (NetSuite display name ->
+# roster person) and a FABRICATED 20-row sample so matching/variance can be
+# demonstrated and verified. The sample is clearly flagged in the workbook and
+# must be cleared before real data is pasted. Week offsets are # of weeks after
+# the capacity-window start (Settings!B3).
+NETSUITE_MAP = [
+    ("Wu, Jennifer", "Jennifer Wu"), ("Kidd, Kyle", "Kyle Kidd"),
+    ("Risser, Kyle", "Kyle Risser"), ("Covalt, Will", "Will Covalt"),
+    ("Berwick, Will", "Will B. W."),
+]
+SAMPLE_ACTUALS = [                      # (project code, NetSuite name, week offset, hours)
+    ("B2V_1", "Wu, Jennifer", 0, 12), ("B2V_1", "Wu, Jennifer", 1, 9),
+    ("B2V_1", "Wu, Jennifer", 2, 11), ("B2V_1", "Lauren", 0, 6),
+    ("B2V_1", "Lauren", 1, 4), ("B2V_1", "Lauren", 2, 5),
+    ("MIF_1", "Patch", 0, 10), ("MIF_1", "Patch", 1, 7), ("MIF_1", "Patch", 2, 9),
+    ("MIF_1", "John", 0, 3), ("MIF_1", "John", 1, 2),
+    ("MIF_1", "Zack", 0, 4), ("MIF_1", "Zack", 1, 3),
+    ("MIF_1", "George", 0, 9), ("MIF_1", "George", 1, 7),
+    ("MIF_1", "Vidhi", 0, 12), ("MIF_1", "Vidhi", 1, 8), ("MIF_1", "Vidhi", 2, 10),
+    ("BADCODE_9", "Yiyi", 0, 5),        # unmatched: project code not in Deals
+    ("Zora_1", "Newhire, Sam", 0, 8),   # unmatched: person not on roster/mapping
+]
+ACTUALS_ROWS = 200                      # paste-area capacity
+
 
 def _archetypes():
     """Expand _ARCH into rows: (name, [hrs by TEMPLATE_LEVELS], dur, f, m1, m2)."""
@@ -456,11 +480,14 @@ def build(deals, assigns, review, out_path):
     wa = wb.create_sheet("Assignments")
     wr = wb.create_sheet("Roster")
     tpl = wb.create_sheet("Templates")
+    act = wb.create_sheet("Actuals")
+    var = wb.create_sheet("Variance")
     st = wb.create_sheet("Settings")
     rv = wb.create_sheet("Review")
     for sheet, color in [(guide, "808080"), (cap, "2E7D32"), (wd, "1F4E79"),
                          (wa, "1F4E79"), (wr, "1F4E79"), (tpl, "7030A0"),
-                         (st, "BF8F00"), (rv, "C00000")]:
+                         (act, "C55A11"), (var, "C55A11"), (st, "BF8F00"),
+                         (rv, "C00000")]:
         sheet.sheet_properties.tabColor = color
 
     deal_rows = sorted(deals.values(), key=lambda d: (LIFE_RANK[d["life"]],
@@ -524,6 +551,8 @@ def build(deals, assigns, review, out_path):
         "YesNoList": "Settings!$K$8:$K$9",
         "LevelList": f"Settings!$L$8:$L${7+len(LEVELS)}",
         "ArchetypeList": f"Templates!$A$3:$A${2+len(_ARCH)}",
+        "MapNetSuite": "Actuals!$N$5:$N$44",
+        "MapTracker": "Actuals!$O$5:$O$44",
     }
     for nm, ref in names.items():
         wb.defined_names[nm] = DefinedName(nm, attr_text=ref)
@@ -557,6 +586,159 @@ def build(deals, assigns, review, out_path):
           "deal's timeline - it never changes the total. Tail intensity is a "
           "formula (leave it); it is what keeps the average at 1.0.", F_NOTE)
     tpl.freeze_panes = "B3"
+
+    # ---------------- Actuals (Step 4: NetSuite time entries + matching)
+    AH = 6                                                # header row
+    A0, A9 = AH + 1, AH + ACTUALS_ROWS                   # first/last data row
+    DA = f'Deals!$A$2:$A${LAST_D}'
+    RN = f'Roster!$A$2:$A${ROSTER_LAST}'
+    RL = f'Roster!$B$2:$B${ROSTER_LAST}'
+    AAp = f'Assignments!$A$2:$A${LAST_A}'
+    AAc = f'Assignments!$C$2:$C${LAST_A}'
+    AAi = f'Assignments!$I$2:$I${LAST_A}'
+    wcell(act, 1, 1, "Actuals - NetSuite time entries", F_TITLE)
+    wcell(act, 2, 1, "Paste the NetSuite export into the blue columns A-D "
+                     "(one row per person x project x week). Everything from "
+                     "column E rightward is calculated. The Variance tab reads "
+                     "from here.", F_NOTE)
+    wcell(act, 3, 1, "CSV contract (build the NetSuite saved search to output "
+                     "exactly these): Project code | Employee name | Week start "
+                     "(Mon) | Hours.", F_NOTE)
+    # live summary
+    wcell(act, 4, 1, "Matched (OK):", F_BOLD)
+    wcell(act, 4, 2, f'=COUNTIF($K${A0}:$K${A9},"OK")', F_BODY, fmt="0")
+    wcell(act, 4, 3, "Unmatched code:", F_BOLD)
+    wcell(act, 4, 4, f'=COUNTIF($K${A0}:$K${A9},"*code*")', F_BODY, fmt="0")
+    wcell(act, 4, 5, "Unmatched person:", F_BOLD)
+    wcell(act, 4, 6, f'=COUNTIF($K${A0}:$K${A9},"*person*")', F_BODY, fmt="0")
+    wcell(act, 4, 7, "Total rows:", F_BOLD)
+    wcell(act, 4, 8, f'=COUNTA($A${A0}:$A${A9})', F_BODY, fmt="0")
+    wcell(act, 5, 1, "SAMPLE DATA below (fabricated) proves matching + variance "
+                     "- DELETE rows 7-26 before pasting real NetSuite data.",
+          Font(name=ARIAL, size=10, bold=True, color="C00000"), FILL_YELLOW)
+    # name-mapping table (NetSuite display name -> roster person)
+    wcell(act, 3, 14, "Name mapping (NetSuite -> roster)", F_BOLD)
+    wcell(act, 4, 14, "NetSuite name", F_HDR, FILL_HDR)
+    wcell(act, 4, 15, "Roster person", F_HDR, FILL_HDR)
+    for i, (ns, trk) in enumerate(NETSUITE_MAP, start=5):
+        wcell(act, i, 14, ns, F_INPUT)
+        wcell(act, i, 15, trk, F_INPUT)
+    act.column_dimensions["N"].width = 20
+    act.column_dimensions["O"].width = 18
+    dvm = DataValidation(type="list", formula1="RosterNames", allow_blank=True)
+    act.add_data_validation(dvm)
+    dvm.add(f"O5:O44")
+    # header + sample input
+    style_header(act, AH, ["Project code", "Employee (NetSuite)", "Week start",
+                           "Hours", "Matched deal", "Matched person", "Level",
+                           "Archetype", "Planned hrs/wk", "Variance (wk)", "Status"],
+                 [18, 20, 12, 8, 16, 16, 15, 22, 11, 11, 20])
+    win0 = dt.date(2026, 7, 20)
+    for i, (code, ns, woff, hrs) in enumerate(SAMPLE_ACTUALS):
+        r = A0 + i
+        wcell(act, r, 1, code, F_INPUT, FILL_AMBER)
+        wcell(act, r, 2, ns, F_INPUT, FILL_AMBER)
+        wcell(act, r, 3, win0 + dt.timedelta(weeks=woff), F_INPUT, FILL_AMBER,
+              "yyyy-mm-dd")
+        wcell(act, r, 4, hrs, F_INPUT, FILL_AMBER, "0.0")
+    # calc columns E-K for the whole paste area
+    for r in range(A0, A9 + 1):
+        direct = f'INDEX({RN},MATCH($B{r},{RN},0))'
+        viamap = f'INDEX(MapTracker,MATCH($B{r},MapNetSuite,0))'
+        wcell(act, r, 5, f'=IF($A{r}="","",IF(COUNTIF({DA},$A{r})>0,$A{r},""))',
+              F_LINK)                                                # matched deal
+        wcell(act, r, 6,
+              f'=IF($B{r}="","",IFERROR({direct},IFERROR(IF({viamap}=0,"",{viamap}),"")))',
+              F_LINK)                                               # matched person
+        wcell(act, r, 7, f'=IF($F{r}="","",IFERROR(INDEX({RL},MATCH($F{r},{RN},0)),""))',
+              F_LINK)                                               # level
+        arx = f'INDEX(Deals!$U$2:$U${LAST_D},MATCH($E{r},{DA},0))'
+        wcell(act, r, 8, f'=IF($E{r}="","",IFERROR(IF({arx}=0,"",{arx}),""))',
+              F_LINK)                                               # archetype
+        wcell(act, r, 9,
+              f'=IF(OR($E{r}="",$F{r}=""),"",SUMIFS({AAi},{AAp},$F{r},{AAc},$E{r}))',
+              F_LINK, fmt="0.0")                                    # planned hrs/wk
+        wcell(act, r, 10, f'=IF(OR($E{r}="",$F{r}=""),"",$D{r}-$I{r})', F_BODY,
+              fmt="0.0;-0.0")                                       # variance
+        wcell(act, r, 11,
+              f'=IF($A{r}="","",IF(AND($E{r}<>"",$F{r}<>""),"OK",'
+              f'TRIM(IF($E{r}="","unmatched code ","")&IF($F{r}="","unmatched person",""))))',
+              F_BODY)                                               # status
+        for ccol in range(1, 12):
+            act.cell(row=r, column=ccol).border = THIN_BTM
+    act.freeze_panes = "A7"
+    act.conditional_formatting.add(
+        f"A{A0}:K{A9}",
+        FormulaRule(formula=[f'AND($A{A0}<>"",$K{A0}<>"OK")'], fill=FILL_RED))
+
+    # ---------------- Variance (Step 4: estimate vs actual + calibration)
+    AE = f'Actuals!$E${A0}:$E${A9}'      # matched deal
+    AF = f'Actuals!$F${A0}:$F${A9}'      # (unused but parallel)
+    AG = f'Actuals!$G${A0}:$G${A9}'      # level
+    AHc = f'Actuals!$H${A0}:$H${A9}'     # archetype
+    AD = f'Actuals!$D${A0}:$D${A9}'      # hours
+    AI = f'Actuals!$I${A0}:$I${A9}'      # planned hrs/wk
+    AK = f'Actuals!$K${A0}:$K${A9}'      # status
+    wcell(var, 1, 1, "Variance - estimate vs actual (from the Actuals tab)",
+          F_TITLE)
+    wcell(var, 2, 1, "Only fully-matched (OK) actual rows are counted. 'Actual "
+                     "hrs' is total logged; 'Planned (logged wks)' sums each "
+                     "logged person-week's planned rate, so the ratio says "
+                     "whether we estimate high (<1) or low (>1).", F_NOTE)
+    # per-deal
+    style_header(var, 4, ["Project code", "Planned hrs/wk (est)", "Actual hrs",
+                          "Planned (logged wks)", "Variance hrs", "Actual/Planned"],
+                 [22, 16, 12, 16, 12, 13])
+    for i, rr in enumerate(range(2, LAST_D + 1)):
+        r = 5 + i
+        wcell(var, r, 1, f'=IF(Deals!$A{rr}="","",Deals!$A{rr})', F_LINK)
+        wcell(var, r, 2, f'=IF($A{r}="","",Deals!$R{rr})', F_LINK, fmt="0.0")
+        wcell(var, r, 3, f'=IF($A{r}="","",SUMIFS({AD},{AE},$A{r},{AK},"OK"))',
+              F_BODY, fmt="0.0;;")
+        wcell(var, r, 4, f'=IF($A{r}="","",SUMIFS({AI},{AE},$A{r},{AK},"OK"))',
+              F_BODY, fmt="0.0;;")
+        wcell(var, r, 5, f'=IF($A{r}="","",$C{r}-$D{r})', F_BODY, fmt="0.0;-0.0;")
+        wcell(var, r, 6, f'=IF(OR($A{r}="",$D{r}=0),"",$C{r}/$D{r})', F_BODY,
+              fmt="0.00;;")
+        for ccol in range(1, 7):
+            var.cell(row=r, column=ccol).border = THIN_BTM
+    var.freeze_panes = "A5"
+    # calibration by level (to the right)
+    cb = 8
+    wcell(var, 4, cb, "Calibration by level", F_BOLD)
+    style_header_at = ["Level", "Actual hrs", "Planned", "Actual/Planned", "Read"]
+    for j, t in enumerate(style_header_at):
+        wcell(var, 5, cb + j, t, F_HDR, FILL_HDR)
+    for i, lvl in enumerate(LEVELS):
+        r = 6 + i
+        wcell(var, r, cb, lvl, F_BODY)
+        wcell(var, r, cb + 1, f'=SUMIFS({AD},{AG},$H{r},{AK},"OK")', F_BODY,
+              fmt="0.0;;")
+        wcell(var, r, cb + 2, f'=SUMIFS({AI},{AG},$H{r},{AK},"OK")', F_BODY,
+              fmt="0.0;;")
+        wcell(var, r, cb + 3, f'=IF($J{r}=0,"",$I{r}/$J{r})', F_BODY, fmt="0.00;;")
+        wcell(var, r, cb + 4,
+              f'=IF($J{r}=0,"",IF($K{r}>1.1,"under-est (raise)",'
+              f'IF($K{r}<0.9,"over-est (lower)","about right")))', F_NOTE)
+    # calibration by archetype (below the level table)
+    ab = cb
+    ar0 = 6 + len(LEVELS) + 2
+    wcell(var, ar0 - 1, ab, "Calibration by archetype", F_BOLD)
+    for j, t in enumerate(["Archetype", "Actual hrs", "Planned", "Actual/Planned"]):
+        wcell(var, ar0, ab + j, t, F_HDR, FILL_HDR)
+    for i, (name, *_ ) in enumerate(_ARCH):
+        r = ar0 + 1 + i
+        wcell(var, r, ab, name, F_BODY)
+        wcell(var, r, ab + 1, f'=SUMIFS({AD},{AHc},$H{r},{AK},"OK")', F_BODY,
+              fmt="0.0;;")
+        wcell(var, r, ab + 2, f'=SUMIFS({AI},{AHc},$H{r},{AK},"OK")', F_BODY,
+              fmt="0.0;;")
+        wcell(var, r, ab + 3, f'=IF($J{r}=0,"",$I{r}/$J{r})', F_BODY, fmt="0.00;;")
+    wcell(var, ar0 + 2 + len(_ARCH), ab,
+          "Archetype rows stay blank until deals have an Effort archetype set "
+          "(Deals tab) - then actuals calibrate each archetype's hours.", F_NOTE)
+    for col in "HIJKL":
+        var.column_dimensions[col].width = 16
 
     # ---------------- Roster
     style_header(wr, 1, ["Person", "Level", "Specialty", "Weekly capacity (hrs)",
@@ -864,6 +1046,7 @@ def build(deals, assigns, review, out_path):
         "Weekly capacity is a placeholder",
         "Level-default hours are placeholders",
         "Effort templates are placeholders",
+        "NetSuite actuals - go-live setup",
     }
     blanket = [
         ("Proposal probabilities defaulted", "", "All 'Proposal' deals",
@@ -883,6 +1066,12 @@ def build(deals, assigns, review, out_path):
          "Step 3 added deal archetypes -> hrs/wk by level + a diligence/tail "
          "phase shape. All numbers are directional placeholders.",
          "Tune in the template workshop; then set each deal's Archetype on Deals"),
+        ("NetSuite actuals - go-live setup", "", "Actuals tab",
+         "Step 4 added the actuals import + Variance calibration, demonstrated "
+         "with a fabricated 20-row sample (flagged). Verify does the register "
+         "Project ID match the NetSuite project code exactly?",
+         "Build the NetSuite saved search to the CSV contract (Guide), delete "
+         "the sample rows, and fill the name-mapping table for any mismatches"),
         ("Old 'Filtered Status' tab", "", "-",
          "It was a manual pivot of the per-person survey; superseded by the "
          "Assignments tab filters", "Nothing to do"),
@@ -973,6 +1162,14 @@ def build(deals, assigns, review, out_path):
          "equity): hrs/wk per person by level + a phase shape (heavier during "
          "diligence, lighter after). Set a deal's 'Effort archetype' on Deals "
          "and its assignments pick up these hours automatically.", F_BODY),
+        ("  Actuals - paste the NetSuite time export (blue columns); it matches "
+         "each row to a deal and person and computes variance vs the plan. Fill "
+         "the name-mapping table (right) when NetSuite names differ from roster "
+         "names. Sample rows are included and flagged - delete them first.",
+         F_BODY),
+        ("  Variance - estimate vs actual: per deal, and a calibration summary "
+         "by level and by archetype (actual/planned ratio - >1 means we "
+         "estimate low, <1 means high). Reads from Actuals.", F_BODY),
         ("  Settings - dropdown lists, level hour defaults, capacity window "
          "start, probability-weighting toggle.", F_BODY),
         ("  Review - section 1 lists what still needs a human answer (yellow "
@@ -1005,6 +1202,10 @@ def build(deals, assigns, review, out_path):
         ("  Weekly 15-min check-in: open Capacity (who is red/amber?), scan "
          "Deals for yellow probability/date cells to update, confirm staffing "
          "on incoming deals.", F_BODY),
+        ("  Load actuals: export NetSuite time as CSV with columns Project "
+         "code | Employee | Week start (Mon) | Hours, paste into Actuals A-D, "
+         "and read the result on the Variance tab. Any NetSuite name that isn't "
+         "a roster name goes in the Actuals name-mapping table once.", F_BODY),
         ("", F_BODY),
         ("ASSUMPTIONS BAKED IN (all editable)", F_BOLD),
         ("  1. Default hrs/wk by level (Settings B8:B14) are PLACEHOLDERS, not "

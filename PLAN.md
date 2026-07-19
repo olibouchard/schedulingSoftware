@@ -43,6 +43,8 @@ Seven tabs. This is the contract every later step builds on — don't restructur
 | **Assignments** | One row per person × deal; the staffing ledger | A person · B roster level (formula) · C project ID · D client (f) · E deal lifecycle (f) · F staffed-as level · G **Active?** · H override hrs/wk · I planned hrs/wk used (f: override → **archetype rate** → level default) · J deal probability (f) · K weighted hrs/wk (f) · L/M deal start/end (f) · N/O effective start/end (f, sentinel dates when L/M blank) · P source status · Q notes · **R–AA phasing helpers** (archetype, front/tail x, split date, seg1 start/end/hrs, seg2 start/end/hrs — see §7) |
 | **Roster** | Team list | A person · B level · C specialty · D weekly capacity hrs · E active assignments (f) · F committed hrs/wk (f) · G utilization (f, CF flags) |
 | **Templates** | Deal archetypes → effort (Step 3) | A archetype name · B–H hrs/wk per person by level (Partner→Associate + Renewable) · I typical duration (wks) · J front-phase fraction · K front intensity ×· L tail intensity × (formula: keeps duration-weighted avg = 1). All B–K placeholders (yellow) |
+| **Actuals** | NetSuite time entries + matching (Step 4) | Paste area A Project code · B NetSuite employee · C week start · D hours (all input); calc E matched deal · F matched person · G level · H archetype · I planned hrs/wk · J weekly variance · K status. Name-mapping table at N/O (NetSuite name → roster person). Summary counts (matched/unmatched) at top. Ships with a flagged fabricated 20-row sample |
+| **Variance** | Estimate vs actual (Step 4) | Per-deal (A code · B planned hrs/wk · C actual hrs · D planned over logged wks · E variance · F actual/planned) + calibration tables by level and by archetype (actual/planned ratio → estimate runs high <1 / low >1). Counts only fully-matched (status = OK) rows |
 | **Settings** | All knobs | B3 capacity window start (Monday) · B4 probability-weighting toggle Yes/No · B8:B14 default hrs/wk by level (placeholders, fallback when no archetype) · columns D–L: dropdown source lists (named ranges) |
 | **Review** | Migration items needing sign-off + the status-mapping table | Topic / person / project / detail / suggested action / **your decision** (yellow). Two sections: ① needs a human, ② resolved from source |
 
@@ -102,13 +104,14 @@ Delivered — the flat hrs/wk model now has an estimation + phasing layer:
 - **Design honored:** INDEX/MATCH-era only; **no 687×26 matrix** — phasing uses ~10 per-assignment helper columns + a 2-SUMIFS Capacity cell (§7); template numbers flagged.
 - **Verified:** 0 errors across 27,002 cells; invariant confirmed (no archetype ⇒ numbers identical to Step 2); synthetic archetype+dates test on B2V_1 hand-matched — Senior-Associate rate 10→14, front week 19.6 (14×1.4), tail 8.4 (14×0.6), past-end 0. Guide updated.
 
-### Step 4 — NetSuite actuals import + variance · **Opus**
+### Step 4 — NetSuite actuals import + variance · **Opus** ✅ done 2026-07-19
 
-- Define the CSV contract for a NetSuite saved search: `project code, person, week start, hours` (document it on the Guide tab for whoever builds the search).
-- An **Actuals** tab with a paste-in area; matching by project code + a person-name mapping table (NetSuite display names ≠ tracker first names — reuse the roster as the mapping anchor).
-- An unmatched-rows report (codes or people that don't match get listed, not silently dropped).
-- Estimate-vs-actual views: per deal (planned vs burned by level) and a calibration summary per level/archetype suggesting default adjustments.
-- Acceptance: with a fabricated 20-row sample CSV (clearly marked fake), matching, variance and unmatched reporting all verifiably correct; recalc clean.
+Delivered — the actuals feedback loop:
+
+- **CSV contract** documented on the Guide and the Actuals tab: `Project code | Employee (NetSuite) | Week start (Mon) | Hours`.
+- **Actuals tab**: paste area (A–D) + per-row matching — deal (project code in Deals), person (roster direct-match, else the NetSuite→roster **name-mapping table** at N/O), level, archetype, the assignment's planned hrs/wk, and weekly variance. A live summary counts matched / unmatched-code / unmatched-person; unmatched rows are flagged red, never silently dropped.
+- **Variance tab**: per-deal estimate vs actual, plus **calibration by level and by archetype** (actual ÷ planned over the logged weeks → >1 means the estimate runs low, <1 high), counting only fully-matched (status = OK) rows.
+- **Verified against a flagged fabricated 20-row sample** (18 OK + 1 bad code + 1 unmapped person): 0 errors across 31,287 cells; matching, per-row/per-deal variance, and by-level calibration all hand-matched exactly (e.g. SA actual 62 / planned 60 → 1.03; VP 42/40 → 1.05; unmatched rows correctly excluded from calibration but counted in the report). Steps 1–3 numbers unchanged (Step 4 only adds tabs). **The sample must be cleared before real data is pasted** — and once actuals are pasted, that's the operational-data-at-scale cutover to bootstrap-only (§6 rule 2).
 
 ### Step 5 — Weekly check-in tab · **Sonnet**
 
