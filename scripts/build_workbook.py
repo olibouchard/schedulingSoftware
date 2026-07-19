@@ -210,6 +210,7 @@ FILL_RED = PatternFill("solid", fgColor="F8CBAD")
 FILL_AMBER = PatternFill("solid", fgColor="FFE699")
 FILL_BLUE = PatternFill("solid", fgColor="D9E1F2")
 FILL_GREEN = PatternFill("solid", fgColor="C6EFCE")         # health-check OK
+FILL_VIOLET = PatternFill("solid", fgColor="E4DFEC")        # scenario levers (Step 7)
 THIN_BTM = Border(bottom=Side(style="thin", color="D9D9D9"))
 
 WROTE = []
@@ -479,6 +480,7 @@ def build(deals, assigns, review, out_path):
     guide = wb.create_sheet("Guide")
     cap = wb.create_sheet("Capacity")
     chk = wb.create_sheet("Check-in")
+    scn = wb.create_sheet("Scenario")
     wd = wb.create_sheet("Deals")
     wa = wb.create_sheet("Assignments")
     wr = wb.create_sheet("Roster")
@@ -488,9 +490,9 @@ def build(deals, assigns, review, out_path):
     st = wb.create_sheet("Settings")
     rv = wb.create_sheet("Review")
     for sheet, color in [(guide, "808080"), (cap, "2E7D32"), (chk, "C00000"),
-                         (wd, "1F4E79"), (wa, "1F4E79"), (wr, "1F4E79"),
-                         (tpl, "7030A0"), (act, "C55A11"), (var, "C55A11"),
-                         (st, "BF8F00"), (rv, "808080")]:
+                         (scn, "7030A0"), (wd, "1F4E79"), (wa, "1F4E79"),
+                         (wr, "1F4E79"), (tpl, "7030A0"), (act, "C55A11"),
+                         (var, "C55A11"), (st, "BF8F00"), (rv, "808080")]:
         sheet.sheet_properties.tabColor = color
 
     deal_rows = sorted(deals.values(), key=lambda d: (LIFE_RANK[d["life"]],
@@ -800,9 +802,13 @@ def build(deals, assigns, review, out_path):
            "Entity classification", "Scope", "Industry", "Complexity flags",
            "Timeline", "# staffed", "Planned hrs/wk", "Source status (Jul 9)",
            "Notes", "Effort archetype", "Front x (calc)", "Tail x (calc)",
-           "Front frac (calc)", "Phase split date (calc)", "Added on"]
+           "Front frac (calc)", "Phase split date (calc)", "Added on",
+           "SCENARIO probability", "SCENARIO start", "SCENARIO end",
+           "Eff. scn prob (calc)", "Eff. scn start (calc)", "Eff. scn end (calc)",
+           "Scenario split (calc)"]
     style_header(wd, 1, hdr, [22, 38, 26, 22, 8, 14, 13, 10, 11, 11, 13, 13, 14,
-                              14, 16, 11, 8, 10, 16, 30, 26, 10, 10, 10, 14, 11])
+                              14, 16, 11, 8, 10, 16, 30, 26, 10, 10, 10, 14, 11,
+                              14, 12, 12, 11, 12, 12, 14])
     example = dict(code="EXAMPLE_0", client="Example Client LLC : Example Target",
                    primary="Example Client LLC", end="Example Target",
                    referral="No", life="Active", source="(example)")
@@ -840,6 +846,13 @@ def build(deals, assigns, review, out_path):
             wcell(wd, r, 21, None, F_INPUT,
                   FILL_YELLOW if live else None)          # Archetype (pick one)
         wcell(wd, r, 26, dt.date(2026, 7, 9), F_INPUT, fmt="yyyy-mm-dd")
+        # scenario override inputs (blank = use live); violet = scenario lever
+        wcell(wd, r, 27, None, F_INPUT, FILL_VIOLET if live and not is_ex else None,
+              "0%")
+        wcell(wd, r, 28, None, F_INPUT, FILL_VIOLET if live and not is_ex else None,
+              "yyyy-mm-dd")
+        wcell(wd, r, 29, None, F_INPUT, FILL_VIOLET if live and not is_ex else None,
+              "yyyy-mm-dd")
         r += 1
     # archetype lookups: front x (V), tail x (W), front frac (X) from Templates;
     # phase split date (Y) = start + frac*(end-start), only when BOTH dates and an
@@ -863,11 +876,24 @@ def build(deals, assigns, review, out_path):
         wcell(wd, rr, 25,
               f'=IF(OR($U{rr}="",$I{rr}="",$J{rr}="",$X{rr}=""),"",'
               f'$I{rr}+$X{rr}*($J{rr}-$I{rr}))', F_BODY, fmt="yyyy-mm-dd")
-        for ccol in range(1, 27):
+        # effective scenario values: override if set, else live. Direct same-row
+        # refs so a scenario probability of 0% (drop the deal) is preserved -
+        # distinct from a blank cell (which means "use live"). AE/AF also "" when
+        # the live date is blank, so Assignments' safe_lookup treats them right.
+        wcell(wd, rr, 30, f'=IF($A{rr}="","",IF($AA{rr}="",$H{rr},$AA{rr}))',
+              F_BODY, fmt="0%")                                    # eff scn prob
+        wcell(wd, rr, 31, f'=IF($A{rr}="","",IF($AB{rr}="",$I{rr},$AB{rr}))',
+              F_BODY, fmt="yyyy-mm-dd")                            # eff scn start
+        wcell(wd, rr, 32, f'=IF($A{rr}="","",IF($AC{rr}="",$J{rr},$AC{rr}))',
+              F_BODY, fmt="yyyy-mm-dd")                            # eff scn end
+        wcell(wd, rr, 33,
+              f'=IF(OR($U{rr}="",$AE{rr}="",$AF{rr}="",$X{rr}=""),"",'
+              f'$AE{rr}+$X{rr}*($AF{rr}-$AE{rr}))', F_BODY, fmt="yyyy-mm-dd")
+        for ccol in range(1, 34):
             wd.cell(row=rr, column=ccol).border = THIN_BTM
     wd.freeze_panes = "B2"
     wd.conditional_formatting.add(
-        f"A2:Z{LAST_D}",
+        f"A2:AG{LAST_D}",
         FormulaRule(formula=['OR($F2="Dead",$F2="Closed",$F2="Invoiced")'],
                     fill=FILL_GREY))
     for col, name in [("F", "LifecycleList"), ("G", "PhaseList"),
@@ -886,9 +912,15 @@ def build(deals, assigns, review, out_path):
            "Archetype (calc)", "Front x (calc)", "Tail x (calc)",
            "Split date (calc)", "Seg1 start (calc)", "Seg1 end (calc)",
            "Seg1 hrs (calc)", "Seg2 start (calc)", "Seg2 end (calc)",
-           "Seg2 hrs (calc)"]
+           "Seg2 hrs (calc)",
+           "scn prob (calc)", "scn wtd (calc)", "scn start (calc)",
+           "scn end (calc)", "scn eff start (calc)", "scn eff end (calc)",
+           "scn split (calc)", "scn seg1 start (calc)", "scn seg1 end (calc)",
+           "scn seg1 hrs (calc)", "scn seg2 start (calc)", "scn seg2 end (calc)",
+           "scn seg2 hrs (calc)"]
     style_header(wa, 1, hdr, [16, 16, 24, 26, 12, 16, 10, 10, 10, 10, 10, 11, 11,
-                              11, 11, 24, 34, 16, 9, 9, 11, 11, 11, 10, 11, 11, 10])
+                              11, 11, 24, 34, 16, 9, 9, 11, 11, 11, 10, 11, 11, 10,
+                              9, 9, 11, 11, 11, 11, 11, 11, 11, 10, 11, 11, 10])
     rows = [dict(person="Tania", code="EXAMPLE_0", staffed_as="Partner",
                  active="Inactive", raw="",
                  note="EXAMPLE row - Inactive so it counts nowhere; delete "
@@ -958,11 +990,42 @@ def build(deals, assigns, review, out_path):
         wcell(wa, rr, 26, f'=IF($U{rr}="",DATE(1900,1,1),$O{rr})', F_BODY,
               fmt="yyyy-mm-dd")
         wcell(wa, rr, 27, f'=IF($U{rr}="",0,$K{rr}*$T{rr})', F_BODY, fmt="0.0")
-        for ccol in range(1, 28):
+        # --- Step 7 scenario mirror (calc; leave alone). Same shape as the live
+        # phasing block above, but sourced from the deal's effective scenario
+        # values. Reuses the archetype m1/m2 (S/T). With no scenario override set
+        # anywhere, every column below equals its live counterpart, so the
+        # Scenario tab equals Capacity exactly.
+        wcell(wa, rr, 28, f'=IF($C{rr}="",0,IFERROR(INDEX(Deals!$AD$2:$AD${LAST_D},'
+                          f'MATCH($C{rr},Deals!$A$2:$A${LAST_D},0)),0))', F_LINK,
+              fmt="0%")                                            # scn prob (0 ok)
+        wcell(wa, rr, 29, f'=IF(Settings!$B$4="Yes",$I{rr}*$AB{rr},$I{rr})',
+              F_BODY, fmt="0.0")                                   # scn weighted
+        wcell(wa, rr, 30, safe_lookup(rr, LAST_D, f'Deals!$AE$2:$AE${LAST_D}'),
+              F_LINK, fmt="yyyy-mm-dd")                            # scn start
+        wcell(wa, rr, 31, safe_lookup(rr, LAST_D, f'Deals!$AF$2:$AF${LAST_D}'),
+              F_LINK, fmt="yyyy-mm-dd")                            # scn end
+        wcell(wa, rr, 32, f'=IF($AD{rr}="",DATE(1900,1,1),$AD{rr})', F_BODY,
+              fmt="yyyy-mm-dd")                                    # scn eff start
+        wcell(wa, rr, 33, f'=IF($AE{rr}="",DATE(2100,12,31),$AE{rr})', F_BODY,
+              fmt="yyyy-mm-dd")                                    # scn eff end
+        wcell(wa, rr, 34, safe_lookup(rr, LAST_D, f'Deals!$AG$2:$AG${LAST_D}'),
+              F_LINK, fmt="yyyy-mm-dd")                            # scn split
+        wcell(wa, rr, 35, f'=IF($AH{rr}="",DATE(1900,1,1),$AF{rr})', F_BODY,
+              fmt="yyyy-mm-dd")                                    # scn seg1 start
+        wcell(wa, rr, 36, f'=IF($AH{rr}="",DATE(2100,12,31),$AH{rr})', F_BODY,
+              fmt="yyyy-mm-dd")                                    # scn seg1 end
+        wcell(wa, rr, 37, f'=IF($AH{rr}="",$AC{rr},$AC{rr}*$S{rr})', F_BODY,
+              fmt="0.0")                                           # scn seg1 hrs
+        wcell(wa, rr, 38, f'=IF($AH{rr}="",DATE(2100,12,31),$AH{rr}+1)', F_BODY,
+              fmt="yyyy-mm-dd")                                    # scn seg2 start
+        wcell(wa, rr, 39, f'=IF($AH{rr}="",DATE(1900,1,1),$AG{rr})', F_BODY,
+              fmt="yyyy-mm-dd")                                    # scn seg2 end
+        wcell(wa, rr, 40, f'=IF($AH{rr}="",0,$AC{rr}*$T{rr})', F_BODY, fmt="0.0")
+        for ccol in range(1, 41):
             wa.cell(row=rr, column=ccol).border = THIN_BTM
     wa.freeze_panes = "D2"
     wa.conditional_formatting.add(
-        f"A2:AA{LAST_A}",
+        f"A2:AN{LAST_A}",
         FormulaRule(formula=['$G2="Inactive"'], fill=FILL_GREY))
     for col, name in [("A", "RosterNames"), ("C", "DealCodes"),
                       ("F", "LevelList"), ("G", "ActiveList")]:
@@ -1035,6 +1098,110 @@ def build(deals, assigns, review, out_path):
     cap.conditional_formatting.add(
         f"C{trow+2}:{lastw}{trow+2}",
         FormulaRule(formula=[f"C{trow+2}<0"], fill=FILL_RED))
+
+    # ---------------- Scenario (Step 7: what-if overrides, isolated from Live)
+    AAp = f'Assignments!$A$2:$A${LAST_A}'
+    AAg = f'Assignments!$G$2:$G${LAST_A}'
+    wcell(scn, 1, 1, "Scenario analysis - what-if, without touching the live plan",
+          F_TITLE)
+    wcell(scn, 2, 1,
+          "This mirrors Capacity but applies the SCENARIO overrides you set on "
+          "the Deals tab (the violet columns: Scenario probability / start / "
+          "end). Leave them blank and this equals Live exactly (every Change "
+          "below is 0). Fill an override - e.g. bump three proposals to 100% - "
+          "to see who would blow up. The live Capacity and Check-in tabs are "
+          "never affected.", F_NOTE)
+    # scenario heatmap placement (built first; summary references it)
+    SHH = 47                                              # heatmap header row
+    SH0 = SHH + 1                                         # first heatmap data row
+    sh_last = SH0 + (ROSTER_LAST - 2)
+    # --- 1) impact summary
+    wcell(scn, 4, 1, "1) Impact summary - who changes under the scenario "
+                     "(peak over the next 4 weeks)", F_BOLD, FILL_VIOLET)
+    style_header(scn, 5, ["Person", "Cap hrs/wk", "Live peak", "Scenario peak",
+                          "Change", "Scenario util", "Flag"],
+                 [16, 11, 11, 13, 10, 13, 16])
+    for i in range(ROSTER_LAST - 1):
+        r = 6 + i
+        src = 2 + i
+        caprow = first_p + i
+        shrow = SH0 + i
+        wcell(scn, r, 1, f'=IF(Roster!$A{src}="","",Roster!$A{src})', F_LINK)
+        wcell(scn, r, 2, f'=IF($A{r}="","",Roster!$D{src})', F_LINK, fmt="0")
+        wcell(scn, r, 3, f'=IF($A{r}="","",MAX(Capacity!$C{caprow}:$F{caprow}))',
+              F_LINK, fmt="0.0")
+        wcell(scn, r, 4, f'=IF($A{r}="","",MAX($C{shrow}:$F{shrow}))', F_LINK,
+              fmt="0.0")
+        wcell(scn, r, 5, f'=IF($A{r}="","",$D{r}-$C{r})', F_BODY, fmt="+0.0;-0.0;")
+        wcell(scn, r, 6, f'=IF(OR($A{r}="",$B{r}=0),"",$D{r}/$B{r})', F_BODY,
+              fmt="0%")
+        wcell(scn, r, 7,
+              f'=IF($B{r}=0,"",IF(AND($D{r}>$B{r},$C{r}<=$B{r}),"NEWLY OVER",'
+              f'IF($D{r}>$B{r},"over",IF(AND($C{r}>$B{r},$D{r}<=$B{r}),"eased",'
+              f'""))))', F_BODY)
+        for ccol in range(1, 8):
+            scn.cell(row=r, column=ccol).border = THIN_BTM
+    sum_last = 6 + (ROSTER_LAST - 2)
+    scn.conditional_formatting.add(f"A6:G{sum_last}", FormulaRule(
+        formula=['OR($G6="NEWLY OVER",$G6="over")'], fill=FILL_RED,
+        stopIfTrue=True))
+    scn.conditional_formatting.add(f"A6:G{sum_last}", FormulaRule(
+        formula=['$G6="eased"'], fill=FILL_GREEN, stopIfTrue=True))
+    scn.conditional_formatting.add(f"E6:E{sum_last}", FormulaRule(
+        formula=['AND(ISNUMBER($E6),$E6<>0)'], fill=FILL_VIOLET))
+    # --- 2) scenario heatmap (mirror of Capacity, scenario seg columns AI..AN)
+    wcell(scn, SHH - 1, 1, "2) Scenario capacity heatmap (person x week, with "
+                           "overrides applied)", F_BOLD, FILL_VIOLET)
+    wcell(scn, SHH, 1, "Person", F_HDR, FILL_HDR)
+    wcell(scn, SHH, 2, "Cap", F_HDR, FILL_HDR)
+    scn.column_dimensions["A"].width = 16
+    scn.column_dimensions["B"].width = 10
+    for w in range(N_WEEKS):
+        col = 3 + w
+        letter = get_column_letter(col)
+        scn.column_dimensions[letter].width = 7
+        f = "=Settings!$B$3" if w == 0 else f"={get_column_letter(col-1)}{SHH}+7"
+        wcell(scn, SHH, col, f, F_HDR, FILL_HDR, "dd-mmm",
+              Alignment(horizontal="center"))
+    for i in range(ROSTER_LAST - 1):
+        r = SH0 + i
+        src = 2 + i
+        wcell(scn, r, 1, f'=IF(Roster!$A{src}="","",Roster!$A{src})', F_LINK)
+        wcell(scn, r, 2, f'=IF($A{r}="","",IFERROR(INDEX(Roster!$D$2:$D${ROSTER_LAST},'
+                         f'MATCH($A{r},Roster!$A$2:$A${ROSTER_LAST},0)),""))',
+              F_LINK, fmt="0")
+        for w in range(N_WEEKS):
+            col = 3 + w
+            L = get_column_letter(col)
+            seg1 = (f'SUMIFS(Assignments!$AK$2:$AK${LAST_A},{AAp},$A{r},'
+                    f'{AAg},"Active",Assignments!$AI$2:$AI${LAST_A},"<="&{L}${SHH},'
+                    f'Assignments!$AJ$2:$AJ${LAST_A},">="&{L}${SHH})')
+            seg2 = (f'SUMIFS(Assignments!$AN$2:$AN${LAST_A},{AAp},$A{r},'
+                    f'{AAg},"Active",Assignments!$AL$2:$AL${LAST_A},"<="&{L}${SHH},'
+                    f'Assignments!$AM$2:$AM${LAST_A},">="&{L}${SHH})')
+            wcell(scn, r, col, f'=IF($A{r}="","",{seg1}+{seg2})', F_BODY,
+                  fmt="0.0;-0.0;")
+    lastw_s = get_column_letter(2 + N_WEEKS)
+    st2 = sh_last + 2
+    wcell(scn, st2, 1, "Team planned (scenario)", F_BOLD)
+    wcell(scn, st2 + 1, 1, "Team planned (live)", F_BOLD)
+    wcell(scn, st2 + 2, 1, "Change", F_BOLD)
+    for w in range(N_WEEKS):
+        L = get_column_letter(3 + w)
+        wcell(scn, st2, 3 + w, f"=SUM({L}{SH0}:{L}{sh_last})", F_BOLD, fmt="0")
+        wcell(scn, st2 + 1, 3 + w, f"=Capacity!{L}{trow}", F_LINK, fmt="0")
+        wcell(scn, st2 + 2, 3 + w, f"={L}{st2}-{L}{st2+1}", F_BOLD,
+              fmt="+0;-0;")
+    scn.freeze_panes = "C6"
+    sgrid = f"C{SH0}:{lastw_s}{sh_last}"
+    scn.conditional_formatting.add(sgrid, FormulaRule(
+        formula=[f"AND(ISNUMBER(C{SH0}),ISNUMBER($B{SH0}),C{SH0}>$B{SH0})"],
+        fill=FILL_RED, stopIfTrue=True))
+    scn.conditional_formatting.add(sgrid, FormulaRule(
+        formula=[f"AND(ISNUMBER(C{SH0}),ISNUMBER($B{SH0}),C{SH0}>0.85*$B{SH0})"],
+        fill=FILL_AMBER, stopIfTrue=True))
+    scn.conditional_formatting.add(f"C{st2+2}:{lastw_s}{st2+2}", FormulaRule(
+        formula=[f"C{st2+2}<>0"], fill=FILL_VIOLET))
 
     # ---------------- Check-in (Step 5: weekly 15-20 min governance agenda)
     wcell(chk, 1, 1, "Weekly Check-in Agenda", F_TITLE)
@@ -1322,8 +1489,14 @@ def build(deals, assigns, review, out_path):
          "staffed level, still at the default probability, no dates, or "
          "stale). Nothing to edit here - update Settings!B19 to today first.",
          F_BODY),
+        ("  Scenario - what-if analysis. Fill the violet SCENARIO columns on "
+         "Deals (probability / start / end) - e.g. bump three proposals to "
+         "100% - and this tab shows who would blow up, Live vs Scenario, "
+         "without touching the real plan. Blank overrides = identical to Live.",
+         F_BODY),
         ("  Deals - one row per engagement: lifecycle, probability, dates and "
-         "deal attributes (dropdowns).", F_BODY),
+         "deal attributes (dropdowns). The violet columns at the far right are "
+         "scenario overrides (see the Scenario tab).", F_BODY),
         ("  Assignments - one row per person on a deal. 'Active?' controls "
          "whether it counts. Hours come from the deal's archetype (or the level "
          "default if no archetype) unless you set an Override. Columns N onward "
@@ -1385,6 +1558,11 @@ def build(deals, assigns, review, out_path):
          "code | Employee | Week start (Mon) | Hours, paste into Actuals A-D, "
          "and read the result on the Variance tab. Any NetSuite name that isn't "
          "a roster name goes in the Actuals name-mapping table once.", F_BODY),
+        ("  Run a what-if: on Deals, fill a violet SCENARIO cell (e.g. set a "
+         "proposal's Scenario probability to 100%, or a deal's to 0% to drop "
+         "it), then open the Scenario tab to see the impact. Clear the violet "
+         "cells to return to Live. Nothing you do there changes the live plan.",
+         F_BODY),
         ("", F_BODY),
         ("ASSUMPTIONS BAKED IN (all editable)", F_BOLD),
         ("  1. Default hrs/wk by level (Settings B8:B14) are PLACEHOLDERS, not "
@@ -1433,7 +1611,7 @@ def build(deals, assigns, review, out_path):
     A0, A9 = 7, 6 + ACTUALS_ROWS
     unlock_specs = {
         "Deals": [(1, 2, 1, LAST_D), (3, 2, 16, LAST_D), (20, 2, 21, LAST_D),
-                  (26, 2, 26, LAST_D)],
+                  (26, 2, 29, LAST_D)],          # 26 Added-on + 27-29 scenario
         "Assignments": [(1, 2, 1, LAST_A), (3, 2, 3, LAST_A), (6, 2, 8, LAST_A),
                         (17, 2, 17, LAST_A)],
         "Roster": [(1, 2, 4, ROSTER_LAST)],
