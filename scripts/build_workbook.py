@@ -169,11 +169,17 @@ def extract(src):
         if code in deals:                                  # duplicate register row
             prev = deals[code]
             keep = "Active" if "Active" in (prev["life"], life) else life
+            same_client = client.lower() == prev["client"].lower()
             prev["source"] += f" + {raw_status} (duplicate rows merged)"
             prev["life"] = keep
-            review.append(("Duplicate register rows merged", "", code,
-                           f"Two rows in the July 9 register; kept lifecycle '{keep}'",
-                           "Confirm one engagement (or split with distinct codes)"))
+            detail = ("Two rows in the July 9 register"
+                      + (", same client" if same_client else ", DIFFERENT clients")
+                      + f"; differ mainly in status - kept lifecycle '{keep}'")
+            action = ("Confirmed one engagement; no action needed"
+                      if same_client else
+                      "Different clients - check whether these are two deals")
+            review.append(("Duplicate register rows merged", "", code, detail,
+                           action))
         else:
             parts = [norm(p) for p in client.split(" : ") if norm(p)]
             referral = "Yes" if "(referral source)" in client.lower() else "No"
@@ -205,6 +211,21 @@ def extract(src):
     ws2 = wb["Summary by Person"]
     summary_person_map = {**{p: p for ps in ROSTER.values() for p in ps},
                           "William B.": "Will B. W."}
+
+    # Recover client names for engagements that never reached the register, from
+    # the Summary / Filtered tabs (both carry a client column). This is data
+    # recovery from the source, not invention.
+    proj_client_recovery = {}
+    for tab in ("Summary by Person", "Filtered Status"):
+        if tab not in wb.sheetnames:
+            continue
+        wsx = wb[tab]
+        for rr in range(2, wsx.max_row + 1):
+            pj = norm(wsx.cell(row=rr, column=3).value)
+            cl = norm(wsx.cell(row=rr, column=2).value)
+            if pj and cl and cl not in proj_client_recovery.get(pj, []):
+                proj_client_recovery.setdefault(pj, []).append(cl)
+
     cur, applied, kyle_unresolved = None, 0, []
     for r in range(2, ws2.max_row + 1):
         a, proj = ws2.cell(row=r, column=1).value, norm(ws2.cell(row=r, column=3).value)
@@ -242,12 +263,26 @@ def extract(src):
             life = ("Closed" if low in ("closed",) else
                     "Proposal" if wipprop == "Proposal" or "proposal" in low
                     else "Active")
-            deals[proj] = dict(code=proj, client="", primary="", end="",
-                               referral="No", life=life,
+            rec_clients = proj_client_recovery.get(proj, [])
+            recovered = rec_clients[0] if rec_clients else ""
+            multi = f" (source also lists: {'; '.join(rec_clients[1:])})" if len(rec_clients) > 1 else ""
+            deals[proj] = dict(code=proj, client=recovered, primary=recovered,
+                               end="", referral="No", life=life,
                                source=f"Summary tab only ({wipprop or 'n/a'})")
-            review.append(("Engagement missing from register", person, proj,
-                           f"Found only on 'Summary by Person' (status: '{raw or wipprop}')",
-                           "Confirm it is real; add client and attributes on Deals tab"))
+            if recovered:
+                review.append((
+                    "Engagement recovered from Summary tab", person, proj,
+                    f"Not in the register; found on the Summary tab (status: "
+                    f"'{raw or wipprop}'). Client recovered from source: "
+                    f"{recovered}{multi}.",
+                    "Client filled in - confirm, then add deal attributes "
+                    "(type / scope / complexity) when known"))
+            else:
+                review.append((
+                    "Engagement missing from register", person, proj,
+                    f"Found only on the Summary tab (status: '{raw or wipprop}'); "
+                    f"no client in source",
+                    "Confirm it is real; add client and attributes on Deals tab"))
         if (person, proj) not in assigns:
             assigns[(person, proj)] = dict(person=person, code=proj,
                                            staffed_as=person_level.get(person, ""),
@@ -275,9 +310,17 @@ def extract(src):
                        "Add the person to Roster or fix the name, then add an "
                        "Assignments row"))
     if "EV3" in deals and "EV3_1" in deals:
-        review.append(("Possible duplicate engagement", "", "EV3 / EV3_1",
-                       "Justine tracks 'EV3', Nina tracks 'EV3_1'",
-                       "Merge into one code if they are the same deal"))
+        c1, c2 = deals["EV3"]["primary"], deals["EV3_1"]["primary"]
+        if c1 and c2 and c1.lower() != c2.lower():
+            review.append((
+                "Name collision - resolved", "", "EV3 / EV3_1",
+                f"Different clients (EV3 = {c1}; EV3_1 = {c2}) - coincidental "
+                f"code similarity, not a duplicate",
+                "Kept as two separate engagements; no action needed"))
+        else:
+            review.append(("Possible duplicate engagement", "", "EV3 / EV3_1",
+                           "Justine tracks 'EV3', Nina tracks 'EV3_1'",
+                           "Merge into one code if they are the same deal"))
 
     # deals with a dead/closed lifecycle force their assignments inactive
     for (p, c), rec in assigns.items():
@@ -633,38 +676,65 @@ def build(deals, assigns, review, out_path):
         FormulaRule(formula=[f"C{trow+2}<0"], fill=FILL_RED))
 
     # ---------------- Review
-    wcell(rv, 1, 1, "Migration review - needs a human sign-off", F_TITLE)
+    wcell(rv, 1, 1, "Migration review", F_TITLE)
     wcell(rv, 2, 1, "Built automatically from Scheduling_US_MA_July_9.xlsx. "
-                    "Nothing was deleted: every register row and every per-person "
-                    "status was carried over; items below are where judgment was "
-                    "applied.", F_NOTE)
+                    "Nothing was deleted. Section 1 needs a human answer (yellow "
+                    "column); section 2 was resolved from the source data and is "
+                    "here only as an audit trail.", F_NOTE)
     style_header(rv, 4, ["Topic", "Person", "Project", "Detail",
                          "Suggested action", "Your decision"],
                  [30, 14, 26, 60, 44, 24])
-    r = 5
-    review_sorted = sorted(review, key=lambda x: x[0])
-    for topic, person, proj, detail, action in review_sorted:
-        for ci, v in enumerate([topic, person, proj, detail, action], start=1):
-            wcell(rv, r, ci, v, align=Alignment(wrap_text=True, vertical="top"))
-        wcell(rv, r, 6, None, F_INPUT, FILL_YELLOW)
-        r += 1
+
+    # Items that genuinely need a person to decide (everything else is FYI).
+    NEEDS_DECISION = {
+        "Unclear personal status", "Ambiguous 'Kyle' rows skipped",
+        "Name not in roster", "Possible duplicate engagement",
+        "Engagement missing from register",
+        "Proposal probabilities defaulted", "Deal dates blank",
+        "Weekly capacity is a placeholder",
+        "Level-default hours are placeholders",
+    }
     blanket = [
         ("Proposal probabilities defaulted", "", "All 'Proposal' deals",
          "Probability prefilled at 50% (WIP deals at 100%)",
-         "Review the yellow Probability cells on the Deals tab at the next "
-         "check-in"),
+         "Set real probabilities in the yellow Probability cells (Deals tab)"),
         ("Deal dates blank", "", "All deals",
          "The July 9 file has no dates, so every deal counts in every week of "
          "the Capacity view",
          "Fill Expected start/end (yellow cells) to time-phase the load"),
+        ("Weekly capacity is a placeholder", "", "All roster",
+         "Everyone is set to 40 h/wk (Roster column D)",
+         "Set each person's real weekly capacity"),
+        ("Level-default hours are placeholders", "", "Settings B8:B14",
+         "Hours/wk per level are directional guesses, not measured data",
+         "Tune with the team at the first check-in"),
         ("Old 'Filtered Status' tab", "", "-",
          "It was a manual pivot of the per-person survey; superseded by the "
          "Assignments tab filters", "Nothing to do"),
     ]
-    for topic, person, proj, detail, action in blanket:
+    all_items = list(review) + blanket
+    needs = sorted((it for it in all_items if it[0] in NEEDS_DECISION),
+                   key=lambda x: x[0])
+    resolved = sorted((it for it in all_items if it[0] not in NEEDS_DECISION),
+                      key=lambda x: x[0])
+
+    r = 5
+    wcell(rv, r, 1, f"1) NEEDS YOUR DECISION  ({len(needs)} items)  -  "
+                    f"fill the yellow column", F_BOLD, FILL_YELLOW)
+    r += 1
+    for topic, person, proj, detail, action in needs:
         for ci, v in enumerate([topic, person, proj, detail, action], start=1):
             wcell(rv, r, ci, v, align=Alignment(wrap_text=True, vertical="top"))
         wcell(rv, r, 6, None, F_INPUT, FILL_YELLOW)
+        r += 1
+    r += 1
+    wcell(rv, r, 1, f"2) RESOLVED FROM SOURCE DATA  ({len(resolved)} items)  -  "
+                    f"audit trail, no action needed", F_BOLD, FILL_GREY)
+    r += 1
+    for topic, person, proj, detail, action in resolved:
+        for ci, v in enumerate([topic, person, proj, detail, action], start=1):
+            wcell(rv, r, ci, v, align=Alignment(wrap_text=True, vertical="top"))
+        wcell(rv, r, 6, "resolved", F_NOTE)
         r += 1
     r += 2
     wcell(rv, r, 1, "Per-person status mapping (raw text -> Active?/Inactive)",
@@ -704,8 +774,9 @@ def build(deals, assigns, review, out_path):
         ("  Roster - the team, weekly capacity, live utilization.", F_BODY),
         ("  Settings - dropdown lists, level hour defaults, capacity window "
          "start, probability-weighting toggle.", F_BODY),
-        ("  Review - migration decisions awaiting sign-off (yellow 'Your "
-         "decision' column).", F_BODY),
+        ("  Review - section 1 lists what still needs a human answer (yellow "
+         "'Your decision' column); section 2 is an audit trail of what was "
+         "resolved automatically from the source data.", F_BODY),
         ("", F_BODY),
         ("COLOR CODE", F_BOLD),
         ("  Blue text = input you can edit    |    Black text = formula, leave "
@@ -765,7 +836,7 @@ def build(deals, assigns, review, out_path):
 
     wb.save(out_path)
     return dict(deals=len(deal_rows), assigns=len(assign_rows),
-                review=len(review_sorted) + len(blanket))
+                review_needs=len(needs), review_resolved=len(resolved))
 
 
 def main():
@@ -774,7 +845,9 @@ def main():
     deals, assigns, review, applied = extract(src)
     stats = build(deals, assigns, review, out)
     print(f"deals={stats['deals']} assignments={stats['assigns']} "
-          f"statuses_applied={applied} review_items={stats['review']}")
+          f"statuses_applied={applied} "
+          f"review_needs_decision={stats['review_needs']} "
+          f"review_resolved={stats['review_resolved']}")
     print(f"wrote {out}")
 
 

@@ -79,12 +79,19 @@ Model guidance in one line: **Opus** for steps where the design is still open or
 
 ### Step 2 — Apply team review round · **Sonnet** (after humans answer)
 
-The team (Justine's group) fills in: the Review tab's yellow decision column, real weekly capacities, tuned level defaults, probabilities on proposals, and expected start/end dates for at least the biggest deals. Then a session:
+**Part A — data-recovery pass (done 2026-07-19, no human input needed).** Before the team touches anything, everything the *source data itself* can answer was resolved via the build script, shrinking the review list from 32 undifferentiated items to a 7-item human shortlist:
 
-- Applies decisions that require restructuring (e.g., merging `EV3`/`EV3_1`, correcting a mis-mapped status, adding a missed person) by **editing the workbook in place** with openpyxl — never regenerating from the script (see §6).
-- Re-verifies with recalc + spot-checks.
-- Acceptance: every Review row has a decision recorded or an explicit "open"; workbook still recalcs clean.
-- **After this step the workbook is the source of truth and the build script is bootstrap-only.**
+- Recovered all 22 "missing client" engagements' clients from the source Summary/Filtered tabs (data recovery, not invention — e.g., Brick_1 → Fengate, EV3 → Kalos LLP).
+- Auto-resolved `EV3`/`EV3_1` (different clients — Kalos LLP vs Eva Equity Partners — a coincidental code collision, *not* a duplicate) and `Cosmetic _1` (both register rows same client, one engagement).
+- Retriaged the Review tab into **①  Needs your decision (7)** and **②  Resolved from source (27, audit trail)**.
+- Re-verified: 0 formula errors, capacity math unchanged. The workbook still holds no human input, so this was done by regenerating from the script (still legitimate — see §6 rule 2 nuance).
+
+**Part B — apply the team's answers (still pending their input).** Justine's group fills in the 7 Review shortlist items + the real numbers: which-Kyle on 5 projects, the two unclear Patch statuses (CLS_1, MIF_1), real weekly capacities, tuned level-default hours, proposal probabilities, and expected start/end dates for at least the biggest deals. Then a session:
+
+- Applies those decisions by **editing the workbook in place** with openpyxl — never regenerating from the script (see §6), because by then the workbook carries non-derivable human input.
+- Re-verifies with the §7 engine + spot-checks.
+- Acceptance: every §1 Review row has a decision recorded or an explicit "open"; workbook still verifies clean.
+- **After Part B the workbook is the source of truth and the build script is bootstrap-only.**
 
 ### Step 3 — Time-phased effort templates · **Opus**
 
