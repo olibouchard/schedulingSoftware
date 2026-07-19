@@ -476,6 +476,7 @@ def build(deals, assigns, review, out_path):
     wb.remove(wb.active)
     guide = wb.create_sheet("Guide")
     cap = wb.create_sheet("Capacity")
+    chk = wb.create_sheet("Check-in")
     wd = wb.create_sheet("Deals")
     wa = wb.create_sheet("Assignments")
     wr = wb.create_sheet("Roster")
@@ -484,10 +485,10 @@ def build(deals, assigns, review, out_path):
     var = wb.create_sheet("Variance")
     st = wb.create_sheet("Settings")
     rv = wb.create_sheet("Review")
-    for sheet, color in [(guide, "808080"), (cap, "2E7D32"), (wd, "1F4E79"),
-                         (wa, "1F4E79"), (wr, "1F4E79"), (tpl, "7030A0"),
-                         (act, "C55A11"), (var, "C55A11"), (st, "BF8F00"),
-                         (rv, "C00000")]:
+    for sheet, color in [(guide, "808080"), (cap, "2E7D32"), (chk, "C00000"),
+                         (wd, "1F4E79"), (wa, "1F4E79"), (wr, "1F4E79"),
+                         (tpl, "7030A0"), (act, "C55A11"), (var, "C55A11"),
+                         (st, "BF8F00"), (rv, "808080")]:
         sheet.sheet_properties.tabColor = color
 
     deal_rows = sorted(deals.values(), key=lambda d: (LIFE_RANK[d["life"]],
@@ -509,6 +510,11 @@ def build(deals, assigns, review, out_path):
     wcell(st, 3, 2, dt.date(2026, 7, 20), F_INPUT, FILL_YELLOW, "yyyy-mm-dd")
     wcell(st, 4, 1, "Probability-weight the Capacity view? (Yes/No)", F_BOLD)
     wcell(st, 4, 2, "Yes", F_INPUT, FILL_YELLOW)
+    wcell(st, 19, 1, "Check-in as-of date (update before each check-in)", F_BOLD)
+    wcell(st, 19, 2, dt.date(2026, 7, 19), F_INPUT, FILL_YELLOW, "yyyy-mm-dd")
+    wcell(st, 20, 1, "Stale-deal threshold (weeks since added, no update)",
+          F_BOLD)
+    wcell(st, 20, 2, 4, F_INPUT, FILL_YELLOW, "0")
     wcell(st, 6, 1, "Default planned hours/week (one person, one deal), by level",
           F_BOLD)
     wcell(st, 6, 4, "PLACEHOLDER values set by Claude from the July 9 staffing "
@@ -792,9 +798,9 @@ def build(deals, assigns, review, out_path):
            "Entity classification", "Scope", "Industry", "Complexity flags",
            "Timeline", "# staffed", "Planned hrs/wk", "Source status (Jul 9)",
            "Notes", "Effort archetype", "Front x (calc)", "Tail x (calc)",
-           "Front frac (calc)", "Phase split date (calc)"]
+           "Front frac (calc)", "Phase split date (calc)", "Added on"]
     style_header(wd, 1, hdr, [22, 38, 26, 22, 8, 14, 13, 10, 11, 11, 13, 13, 14,
-                              14, 16, 11, 8, 10, 16, 30, 26, 10, 10, 10, 14])
+                              14, 16, 11, 8, 10, 16, 30, 26, 10, 10, 10, 14, 11])
     example = dict(code="EXAMPLE_0", client="Example Client LLC : Example Target",
                    primary="Example Client LLC", end="Example Target",
                    referral="No", life="Active", source="(example)")
@@ -831,6 +837,7 @@ def build(deals, assigns, review, out_path):
         else:
             wcell(wd, r, 21, None, F_INPUT,
                   FILL_YELLOW if live else None)          # Archetype (pick one)
+        wcell(wd, r, 26, dt.date(2026, 7, 9), F_INPUT, fmt="yyyy-mm-dd")
         r += 1
     # archetype lookups: front x (V), tail x (W), front frac (X) from Templates;
     # phase split date (Y) = start + frac*(end-start), only when BOTH dates and an
@@ -854,11 +861,11 @@ def build(deals, assigns, review, out_path):
         wcell(wd, rr, 25,
               f'=IF(OR($U{rr}="",$I{rr}="",$J{rr}="",$X{rr}=""),"",'
               f'$I{rr}+$X{rr}*($J{rr}-$I{rr}))', F_BODY, fmt="yyyy-mm-dd")
-        for ccol in range(1, 26):
+        for ccol in range(1, 27):
             wd.cell(row=rr, column=ccol).border = THIN_BTM
     wd.freeze_panes = "B2"
     wd.conditional_formatting.add(
-        f"A2:Y{LAST_D}",
+        f"A2:Z{LAST_D}",
         FormulaRule(formula=['OR($F2="Dead",$F2="Closed",$F2="Invoiced")'],
                     fill=FILL_GREY))
     for col, name in [("F", "LifecycleList"), ("G", "PhaseList"),
@@ -1027,6 +1034,109 @@ def build(deals, assigns, review, out_path):
         f"C{trow+2}:{lastw}{trow+2}",
         FormulaRule(formula=[f"C{trow+2}<0"], fill=FILL_RED))
 
+    # ---------------- Check-in (Step 5: weekly 15-20 min governance agenda)
+    wcell(chk, 1, 1, "Weekly Check-in Agenda", F_TITLE)
+    wcell(chk, 2, 1,
+          '="As of "&TEXT(Settings!$B$19,"yyyy-mm-dd")&" | Validate near-term '
+          'capacity, rebalance workload, confirm staffing on incoming deals. '
+          'Update Settings!B19 to today before each check-in."', F_NOTE)
+    wcell(chk, 3, 1,
+          "Definitions (adjust in Settings if the team means something "
+          "different): 'Missing level' = the deal has an Effort archetype "
+          "that expects hours from a level, but nobody at that level is "
+          "actively staffed. 'Stale' = weeks since Added-on >= the Settings "
+          "threshold (currently editable at Settings!B20).", F_NOTE)
+
+    # --- Section 1: capacity, next 4 weeks (mirrors Roster/Capacity row-for-row)
+    wcell(chk, 5, 1, "1) Capacity - next 4 weeks", F_BOLD, FILL_AMBER)
+    style_header(chk, 6, ["Person", "Level", "Cap hrs/wk", "Max load (4 wk)",
+                          "Max utilization", "Flag"], [16, 18, 11, 13, 13, 18])
+    c0 = 7                                                  # first data row
+    c9 = c0 + ROSTER_LAST - 2
+    week4 = get_column_letter(2 + 4)                        # first 4 weeks = C:F
+    for i, r in enumerate(range(c0, c9 + 1)):
+        src = 2 + i                                         # aligned Roster row
+        caprow = first_p + i                                # aligned Capacity row
+        wcell(chk, r, 1, f'=IF(Roster!$A{src}="","",Roster!$A{src})', F_LINK)
+        wcell(chk, r, 2, f'=IF($A{r}="","",Roster!$B{src})', F_LINK)
+        wcell(chk, r, 3, f'=IF($A{r}="","",Roster!$D{src})', F_LINK, fmt="0")
+        wcell(chk, r, 4,
+              f'=IF($A{r}="","",MAX(Capacity!$C${caprow}:${week4}${caprow}))',
+              F_LINK, fmt="0.0")
+        wcell(chk, r, 5, f'=IF(OR($A{r}="",$C{r}=0),"",$D{r}/$C{r})', F_BODY,
+              fmt="0%")
+        wcell(chk, r, 6,
+              f'=IF($A{r}="","",IF(AND(ISNUMBER($E{r}),$E{r}>1),'
+              f'"OVER-ALLOCATED",IF(AND(ISNUMBER($E{r}),$E{r}<0.5),'
+              f'"UNDER-UTILIZED","")))', F_BODY)
+        for ccol in range(1, 7):
+            chk.cell(row=r, column=ccol).border = THIN_BTM
+    chk.conditional_formatting.add(
+        f"A{c0}:F{c9}",
+        FormulaRule(formula=[f'$F{c0}="OVER-ALLOCATED"'], fill=FILL_RED,
+                    stopIfTrue=True))
+    chk.conditional_formatting.add(
+        f"A{c0}:F{c9}",
+        FormulaRule(formula=[f'$F{c0}="UNDER-UTILIZED"'], fill=FILL_BLUE,
+                    stopIfTrue=True))
+
+    # --- Section 2: deals needing attention (mirrors Deals row-for-row)
+    d5 = c9 + 3
+    wcell(chk, d5, 1, "2) Deals needing attention", F_BOLD, FILL_AMBER)
+    style_header(chk, d5 + 1,
+                 ["Project ID", "Client", "Lifecycle", "Probability",
+                  "# staffed", "Dates set?", "Added on", "Weeks since added",
+                  "Flag"],
+                 [22, 26, 14, 10, 8, 9, 11, 11, 46])
+    d0 = d5 + 2
+    d9 = d0 + (LAST_D - 2)
+    for i, r in enumerate(range(d0, d9 + 1)):
+        rr = 2 + i                                          # aligned Deals row
+        live = f'OR(Deals!$F{rr}="Active",Deals!$F{rr}="Proposal")'
+        wcell(chk, r, 1, f'=IF(Deals!$A{rr}="","",Deals!$A{rr})', F_LINK)
+        wcell(chk, r, 2, f'=IF($A{r}="","",Deals!$C{rr})', F_LINK)
+        wcell(chk, r, 3, f'=IF($A{r}="","",Deals!$F{rr})', F_LINK)
+        wcell(chk, r, 4, f'=IF($A{r}="","",Deals!$H{rr})', F_LINK, fmt="0%")
+        wcell(chk, r, 5, f'=IF($A{r}="","",Deals!$Q{rr})', F_LINK, fmt="0")
+        wcell(chk, r, 6,
+              f'=IF($A{r}="","",IF(AND(Deals!$I{rr}<>"",Deals!$J{rr}<>""),'
+              f'"Yes","No"))', F_LINK)
+        wcell(chk, r, 7, f'=IF($A{r}="","",Deals!$Z{rr})', F_LINK,
+              fmt="yyyy-mm-dd")
+        wcell(chk, r, 8,
+              f'=IF(OR($A{r}="",$G{r}=""),"",INT((Settings!$B$19-$G{r})/7))',
+              F_BODY, fmt="0")
+        # missing-level check: for each template level, archetype expects
+        # hours (>0) but nobody active at that level is staffed
+        missing_clauses = []
+        for lvl_col, lvl_name in zip("BCDEFGH", LEVELS):
+            missing_clauses.append(
+                f'AND(IFERROR(INDEX(Templates!${lvl_col}$3:${lvl_col}${TN},'
+                f'MATCH(Deals!$U{rr},Templates!$A$3:$A${TN},0)),0)>0,'
+                f'COUNTIFS(Assignments!$C$2:$C${LAST_A},$A{r},'
+                f'Assignments!$F$2:$F${LAST_A},"{lvl_name}",'
+                f'Assignments!$G$2:$G${LAST_A},"Active")=0)')
+        missing = f'IF(Deals!$U{rr}="",FALSE,OR({",".join(missing_clauses)}))'
+        wcell(chk, r, 9,
+              f'=IF(OR($A{r}="",NOT({live})),"",TRIM('
+              f'IF($E{r}=0," Unstaffed","")&'
+              f'IF({missing}," MissingLevel","")&'
+              f'IF(AND($C{r}="Proposal",Deals!$H{rr}={PROB_PROPOSAL})," '
+              f'DefaultProbability","")&'
+              f'IF($F{r}="No"," NoDates","")&'
+              f'IF(AND(ISNUMBER($H{r}),$H{r}>=Settings!$B$20)," Stale","")))',
+              F_BODY, align=Alignment(wrap_text=True, vertical="top"))
+        for ccol in range(1, 10):
+            chk.cell(row=r, column=ccol).border = THIN_BTM
+    chk.conditional_formatting.add(
+        f"A{d0}:I{d9}",
+        FormulaRule(formula=[f'AND($I{d0}<>"",$A{d0}<>"")'], fill=FILL_AMBER))
+    chk.column_dimensions["A"].width = 22
+    chk.column_dimensions["I"].width = 46
+    chk.freeze_panes = "A7"
+    chk.row_dimensions[2].height = 28
+    chk.row_dimensions[3].height = 40
+
     # ---------------- Review
     wcell(rv, 1, 1, "Migration review", F_TITLE)
     wcell(rv, 2, 1, "Built automatically from Scheduling_US_MA_July_9.xlsx. "
@@ -1047,6 +1157,7 @@ def build(deals, assigns, review, out_path):
         "Level-default hours are placeholders",
         "Effort templates are placeholders",
         "NetSuite actuals - go-live setup",
+        "Check-in tab definitions to confirm",
     }
     blanket = [
         ("Proposal probabilities defaulted", "", "All 'Proposal' deals",
@@ -1072,6 +1183,14 @@ def build(deals, assigns, review, out_path):
          "Project ID match the NetSuite project code exactly?",
          "Build the NetSuite saved search to the CSV contract (Guide), delete "
          "the sample rows, and fill the name-mapping table for any mismatches"),
+        ("Check-in tab definitions to confirm", "", "Check-in tab",
+         "Step 5's 'Missing level' means: the deal's archetype expects hours "
+         "from a level, but nobody at that level is actively staffed. 'Stale' "
+         "means: weeks since 'Added on' >= Settings!B20 (4, placeholder). "
+         "'Added on' is 2026-07-09 for every migrated deal (build date, not "
+         "actual deal start), so nothing shows Stale yet.",
+         "Confirm these definitions match what the team means; tune the "
+         "stale-weeks threshold (Settings!B20)"),
         ("Old 'Filtered Status' tab", "", "-",
          "It was a manual pivot of the per-person survey; superseded by the "
          "Assignments tab filters", "Nothing to do"),
@@ -1150,6 +1269,12 @@ def build(deals, assigns, review, out_path):
         ("TABS", F_BOLD),
         ("  Capacity - the dashboard: planned hours per person per week. Red = "
          "over capacity, amber = above 85%.", F_BODY),
+        ("  Check-in - the weekly 15-20 min meeting agenda, generated "
+         "automatically: who's over/under-allocated in the next 4 weeks, and "
+         "which Active/Proposal deals need attention (unstaffed, missing a "
+         "staffed level, still at the default probability, no dates, or "
+         "stale). Nothing to edit here - update Settings!B19 to today first.",
+         F_BODY),
         ("  Deals - one row per engagement: lifecycle, probability, dates and "
          "deal attributes (dropdowns).", F_BODY),
         ("  Assignments - one row per person on a deal. 'Active?' controls "
@@ -1199,9 +1324,10 @@ def build(deals, assigns, review, out_path):
          F_BODY),
         ("  New team member: add to Roster (name, level, capacity) - they "
          "appear in every dropdown.", F_BODY),
-        ("  Weekly 15-min check-in: open Capacity (who is red/amber?), scan "
-         "Deals for yellow probability/date cells to update, confirm staffing "
-         "on incoming deals.", F_BODY),
+        ("  Weekly 15-min check-in: update Settings!B19 to today, then open "
+         "the Check-in tab - it lists who's over/under-allocated and which "
+         "deals need attention. Work the list, update Deals/Assignments as "
+         "you go.", F_BODY),
         ("  Load actuals: export NetSuite time as CSV with columns Project "
          "code | Employee | Week start (Mon) | Hours, paste into Actuals A-D, "
          "and read the result on the Variance tab. Any NetSuite name that isn't "
@@ -1219,6 +1345,10 @@ def build(deals, assigns, review, out_path):
         ("  5. Where the per-person survey said someone is done ('pencils "
          "down', 'closed', 'not involved'), that assignment was set Inactive - "
          "full mapping on the Review tab.", F_BODY),
+        ("  6. 'Added on' (Deals col Z) is set to 2026-07-09 for every migrated "
+         "deal - it is not when the deal actually started, just when this "
+         "tracker was built. The Check-in tab's 'Stale' flag and staleness "
+         "threshold (Settings B20, 4 weeks) are placeholders.", F_BODY),
         ("", F_BODY),
         ("Source: Scheduling_US_MA_July_9.xlsx (July 9) and Justine Morin's "
          "scheduling brief (June 4, 2026). Migration by scripts/"
