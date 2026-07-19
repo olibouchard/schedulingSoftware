@@ -20,9 +20,10 @@ import datetime as dt
 from collections import OrderedDict
 
 import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, Protection
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.worksheet.protection import SheetProtection
 from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.utils import get_column_letter
 
@@ -208,6 +209,7 @@ FILL_GREY = PatternFill("solid", fgColor="F2F2F2")
 FILL_RED = PatternFill("solid", fgColor="F8CBAD")
 FILL_AMBER = PatternFill("solid", fgColor="FFE699")
 FILL_BLUE = PatternFill("solid", fgColor="D9E1F2")
+FILL_GREEN = PatternFill("solid", fgColor="C6EFCE")         # health-check OK
 THIN_BTM = Border(bottom=Side(style="thin", color="D9D9D9"))
 
 WROTE = []
@@ -1136,16 +1138,61 @@ def build(deals, assigns, review, out_path):
     chk.freeze_panes = "A7"
     chk.row_dimensions[2].height = 28
     chk.row_dimensions[3].height = 40
+    # print setup: the check-in is meant to be printed/shared each week
+    chk.print_area = f"A1:I{d9}"
+    chk.page_setup.orientation = "landscape"
+    chk.page_setup.fitToWidth = 1
+    chk.page_setup.fitToHeight = 0
+    chk.sheet_properties.pageSetUpPr = openpyxl.worksheet.properties.PageSetupProperties(
+        fitToPage=True)
+    chk.print_options.horizontalCentered = True
+    chk.print_title_rows = "1:6"                          # repeat headers per page
 
-    # ---------------- Review
-    wcell(rv, 1, 1, "Migration review", F_TITLE)
+    # ---------------- Review (+ data-health panel, Step 6)
+    wcell(rv, 1, 1, "Migration review & data health", F_TITLE)
     wcell(rv, 2, 1, "Built automatically from Scheduling_US_MA_July_9.xlsx. "
-                    "Nothing was deleted. Section 1 needs a human answer (yellow "
-                    "column); section 2 was resolved from the source data and is "
-                    "here only as an audit trail.", F_NOTE)
-    style_header(rv, 4, ["Topic", "Person", "Project", "Detail",
-                         "Suggested action", "Your decision"],
-                 [30, 14, 26, 60, 44, 24])
+                    "Nothing was deleted. Below: a data-health panel (should "
+                    "stay green), then the migration items - section 1 needs a "
+                    "human answer (yellow column), section 2 is an audit trail.",
+          F_NOTE)
+    # data-health panel
+    wcell(rv, 4, 1, "DATA HEALTH (recomputes live)", F_BOLD, FILL_HDR)
+    rv.cell(row=4, column=1).font = Font(name=ARIAL, size=10, bold=True,
+                                         color="FFFFFF")
+    for ci, t in enumerate(["Check", "Count", "Status"], start=1):
+        wcell(rv, 5, ci, t, F_HDR, FILL_HDR)
+    health = [
+        # "~?" escapes the literal ? (bare "?" is a COUNTIF single-char wildcard)
+        ("Assignments pointing at an unknown person",
+         f'=COUNTIF(Assignments!$B$2:$B${LAST_A},"~?")', True),
+        ("Assignments pointing at an unknown project code",
+         f'=COUNTIF(Assignments!$D$2:$D${LAST_A},"~?")', True),
+        ("Duplicate project codes on the Deals tab",
+         f'=SUMPRODUCT((COUNTIF(Deals!$A$2:$A${LAST_D},Deals!$A$2:$A${LAST_D})>1)'
+         f'*(Deals!$A$2:$A${LAST_D}<>""))', True),
+        ("Active/Proposal deals with nobody staffed (incl. EXAMPLE row)",
+         f'=COUNTIFS(Deals!$F$2:$F${LAST_D},"Active",Deals!$Q$2:$Q${LAST_D},0)'
+         f'+COUNTIFS(Deals!$F$2:$F${LAST_D},"Proposal",Deals!$Q$2:$Q${LAST_D},0)',
+         False),
+    ]
+    hr = 6
+    for label, formula, integrity in health:
+        wcell(rv, hr, 1, label, F_BODY)
+        wcell(rv, hr, 2, formula, F_BODY, fmt="0")
+        if integrity:
+            wcell(rv, hr, 3, f'=IF($B{hr}=0,"OK","CHECK")', F_BODY)
+        else:
+            wcell(rv, hr, 3, '="see Check-in tab"', F_NOTE)
+        hr += 1
+    rv.conditional_formatting.add("C6:C8", FormulaRule(
+        formula=['$C6="OK"'], fill=FILL_GREEN, stopIfTrue=True))
+    rv.conditional_formatting.add("C6:C8", FormulaRule(
+        formula=['$C6="CHECK"'], fill=FILL_RED, stopIfTrue=True))
+
+    RVH = 12                                              # migration header row
+    style_header(rv, RVH, ["Topic", "Person", "Project", "Detail",
+                           "Suggested action", "Your decision"],
+                 [42, 14, 26, 60, 44, 24])
 
     # Items that genuinely need a person to decide (everything else is FYI).
     NEEDS_DECISION = {
@@ -1219,7 +1266,7 @@ def build(deals, assigns, review, out_path):
             return DECISION_TEXT["mif"], False
         return None, True
 
-    r = 5
+    r = RVH + 1
     wcell(rv, r, 1, f"1) REVIEWED 2026-07-19  ({len(needs)} items)  -  team's "
                     f"answer in the last column; amber = still partly open",
           F_BOLD, FILL_YELLOW)
@@ -1255,7 +1302,7 @@ def build(deals, assigns, review, out_path):
         wcell(rv, r, 1, raw)
         wcell(rv, r, 2, "Inactive")
         r += 1
-    rv.freeze_panes = "A5"
+    rv.freeze_panes = f"A{RVH + 1}"
 
     # ---------------- Guide
     guide.column_dimensions["A"].width = 4
@@ -1306,6 +1353,12 @@ def build(deals, assigns, review, out_path):
          "alone    |    Green text = pulled from another tab", F_BODY),
         ("  Yellow fill = please fill in / review    |    Grey row = inactive "
          "(dead, closed, rolled off)", F_BODY),
+        ("  Sheets are protected so a stray keystroke can't overwrite a formula "
+         "- you can still edit every blue/yellow input cell and add rows in the "
+         "blank spare rows. There's no password: Review > Unprotect Sheet if you "
+         "ever need to change a formula. Don't insert/delete/sort rows on Deals, "
+         "Assignments or Roster - Capacity and Check-in track them row-for-row.",
+         F_BODY),
         ("", F_BODY),
         ("HOW TO", F_BOLD),
         ("  Add a deal: next blank row on Deals - Project ID, client, Lifecycle, "
@@ -1369,6 +1422,41 @@ def build(deals, assigns, review, out_path):
                     bold = c.font.bold if c.font else False
                     c.font = Font(name=ARIAL, size=10, bold=bold,
                                   color=c.font.color if c.font else None)
+
+    # ---- Step 6: protect formulas, keep input cells editable. Input ranges
+    # (1-based col1,row1,col2,row2) get unlocked; everything else stays locked so
+    # a stray keystroke can't overwrite a formula. No password (a guardrail, not
+    # security - the team can unprotect if they ever need to). Structural edits
+    # (insert / delete / sort rows) are disabled because Capacity / Check-in /
+    # Variance mirror Deals & Roster ROW-FOR-ROW; reordering would desync them.
+    # Add data in the pre-provided blank spare rows instead.
+    A0, A9 = 7, 6 + ACTUALS_ROWS
+    unlock_specs = {
+        "Deals": [(1, 2, 1, LAST_D), (3, 2, 16, LAST_D), (20, 2, 21, LAST_D),
+                  (26, 2, 26, LAST_D)],
+        "Assignments": [(1, 2, 1, LAST_A), (3, 2, 3, LAST_A), (6, 2, 8, LAST_A),
+                        (17, 2, 17, LAST_A)],
+        "Roster": [(1, 2, 4, ROSTER_LAST)],
+        "Templates": [(1, 3, 11, TN)],
+        "Actuals": [(1, A0, 4, A9), (14, 5, 15, 44)],
+        "Settings": [(2, 3, 2, 4), (2, 8, 2, 14), (2, 19, 2, 20), (4, 8, 12, 30)],
+        "Review": [(6, RVH + 1, 6, RVH + 60)],
+    }
+    unlocked = Protection(locked=False)
+    for sheet in wb.worksheets:
+        for (c1, r1, c2, r2) in unlock_specs.get(sheet.title, []):
+            for row in sheet.iter_rows(min_row=r1, max_row=r2, min_col=c1,
+                                       max_col=c2):
+                for cell in row:
+                    cell.protection = unlocked
+        sheet.protection = SheetProtection(
+            sheet=True, password=None,
+            selectLockedCells=False, selectUnlockedCells=False,
+            formatCells=False, formatColumns=False, formatRows=False,
+            autoFilter=False,                    # False = action allowed
+            insertColumns=True, insertRows=True, deleteColumns=True,
+            deleteRows=True, sort=True, pivotTables=True,  # True = disabled
+            objects=True, scenarios=True)
 
     wb.save(out_path)
     return dict(deals=len(deal_rows), assigns=len(assign_rows),
