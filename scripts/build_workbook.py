@@ -110,6 +110,55 @@ _ARCH = [
 ]
 _LK = ["Partner", "MD", "Director", "VP", "SA", "Ren", "Assoc"]  # dict keys, order = TEMPLATE_LEVELS
 
+# ---- Step 8: workstream scoping taxonomy (Justine's July 21 email, VERBATIM).
+# Dropdown value lists (exact wording - do not reword):
+TDD_TYPES = ["Asset Deal (or DRE)", "Partnership with push out",
+             "Partnership no push out", "C Corporation", "S Corporation"]
+TDD_SCOPES = ["Inquiry basis", "Limited Procedures", "Key Findings"]
+OTHER_TDD = ["Carve out", "Non-US jurisdiction coordination", "8A / Taxand", "N/A"]
+CORP_MODEL = ["Basic (no roll up)", "Building roll up"]   # blank = N/A
+Y_TICK = ["Y"]                                            # tick or leave blank (= N/A)
+# Scoping columns appended to Deals (col index, header, dropdown named range,
+# EXAMPLE-row value). Multi-select modeling/structuring are one Y/blank column
+# each. Order and wording follow the email exactly.
+WS_TAXONOMY = [
+    (34, "TDD deal type", "TddTypeList", "Asset Deal (or DRE)"),
+    (35, "Domestic only? (Y/N)", "YesNoList", "Y"),
+    (36, "TDD scope", "TddScopeList", "Limited Procedures"),
+    (37, "Other TDD scoping", "OtherTddList", "Carve out"),
+    (38, "Modeling: Corporate tax modeling", "CorpModelList", "Building roll up"),
+    (39, "Modeling: Tracking Model Review", "YTickList", ""),
+    (40, "Modeling: Property tax Modeling", "YTickList", ""),
+    (41, "Modeling: SALT Modeling", "YTickList", "Y"),
+    (42, "Modeling: Tax Credit Assumption Review", "YTickList", ""),
+    (43, "Modeling: Step Up Calculation", "YTickList", "Y"),
+    (44, "Modeling: Section 382 limitation", "YTickList", ""),
+    (45, "Modeling: FIRPTA Modeling", "YTickList", ""),
+    (46, "Modeling: Other modeling complexities", "YTickList", ""),
+    (47, "Structuring: Strawman deck", "YTickList", "Y"),
+    (48, "Structuring: Structure paper", "YTickList", ""),
+    (49, "Structuring: Opinion", "YTickList", ""),
+    (50, "Legal docs review", "YTickList", "Y"),
+]
+WS_FIRST, WS_LAST = 34, 50                                # AH .. AX
+# Fee -> hours parameters (Step 8 structure; Step 9 wires them). Fees are quoted
+# per workstream GROUP; the split matrix is group x level (each row sums to 100%).
+WS_GROUPS = ["TDD", "Modeling", "Structuring", "Legal docs review", "Other"]
+# PLACEHOLDER rate card ($/hr by level) and split % - illustrative, to be replaced
+# by the team's real rate card + split matrix. Split rows each total 100%.
+RATE_CARD = OrderedDict([("Partner", 900), ("MD", 700), ("Director", 550),
+                         ("VP", 400), ("Senior Associate", 300),
+                         ("Renewable Specialist", 250), ("Associate", 200)])
+SPLIT_PLACEHOLDER = {   # group -> [Partner, MD, Director, VP, SA, Renewable, Assoc] %, sum 100
+    "TDD": [5, 10, 15, 20, 30, 0, 20],
+    "Modeling": [3, 7, 15, 25, 30, 0, 20],
+    "Structuring": [10, 20, 30, 20, 15, 0, 5],
+    "Legal docs review": [5, 15, 30, 25, 20, 0, 5],
+    "Other": [5, 10, 20, 25, 25, 5, 10],
+}
+GROUP_DURATION = OrderedDict([("TDD", 8), ("Modeling", 6), ("Structuring", 6),
+                              ("Legal docs review", 4), ("Other", 6)])
+
 # ---- Step 4: NetSuite actuals. Seed name-mapping (NetSuite display name ->
 # roster person) and a FABRICATED 20-row sample so matching/variance can be
 # demonstrated and verified. The sample is clearly flagged in the workbook and
@@ -530,11 +579,15 @@ def build(deals, assigns, review, out_path):
         wcell(st, i, 1, lvl)
         wcell(st, i, 2, hrs, F_INPUT, FILL_YELLOW, "0.0")
     lists = [("D", "Lifecycle", LIFECYCLES), ("E", "Phase", PHASES),
-             ("F", "Transaction type", TXN_TYPES),
-             ("G", "Entity classification", ENTITY_CLASSES),
-             ("H", "Scope", SCOPES), ("I", "Timeline", TIMELINES),
+             ("F", "Transaction type (legacy)", TXN_TYPES),
+             ("G", "Entity classification (legacy)", ENTITY_CLASSES),
+             ("H", "Scope (legacy)", SCOPES), ("I", "Timeline (legacy)", TIMELINES),
              ("J", "Active flag", ["Active", "Inactive"]),
-             ("K", "Yes/No", ["Yes", "No"]), ("L", "Levels", LEVELS)]
+             ("K", "Yes/No", ["Yes", "No"]), ("L", "Levels", LEVELS),
+             ("M", "TDD deal type", TDD_TYPES), ("N", "TDD scope", TDD_SCOPES),
+             ("O", "Other TDD scoping", OTHER_TDD),
+             ("P", "Corporate tax modeling", CORP_MODEL),
+             ("Q", "Tick (Y)", Y_TICK)]
     for col, title, values in lists:
         ci = openpyxl.utils.column_index_from_string(col)
         wcell(st, 7, ci, title, F_HDR, FILL_HDR)
@@ -563,20 +616,30 @@ def build(deals, assigns, review, out_path):
         "ArchetypeList": f"Templates!$A$3:$A${2+len(_ARCH)}",
         "MapNetSuite": "Actuals!$N$5:$N$44",
         "MapTracker": "Actuals!$O$5:$O$44",
+        "TddTypeList": f"Settings!$M$8:$M${7+len(TDD_TYPES)}",
+        "TddScopeList": f"Settings!$N$8:$N${7+len(TDD_SCOPES)}",
+        "OtherTddList": f"Settings!$O$8:$O${7+len(OTHER_TDD)}",
+        "CorpModelList": f"Settings!$P$8:$P${7+len(CORP_MODEL)}",
+        "YTickList": f"Settings!$Q$8:$Q${7+len(Y_TICK)}",
     }
     for nm, ref in names.items():
         wb.defined_names[nm] = DefinedName(nm, attr_text=ref)
 
-    # ---------------- Templates (Step 3: effort archetypes)
-    TN = 2 + len(_ARCH)                                   # last archetype row
+    # ---------------- Templates (Step 3 archetypes = LEGACY; Step 8 fee params)
+    # Archetype table stays at header row 2 / data rows 3..TN - its cells are
+    # referenced by the phasing formulas, so it must NOT move. Fee-allocation
+    # parameters are appended below (fixed anchors TW_*).
+    TN = 2 + len(_ARCH)                                   # last archetype row (10)
+    TW_TITLE = TN + 4                                     # 14 - fee-params banner
+    TW_RATE = TW_TITLE + 2                                # 16 - rate-card header
+    TW_SPLIT = TW_RATE + len(RATE_CARD) + 3               # 26 - split-matrix header
+    TW_DUR = TW_SPLIT + len(WS_GROUPS) + 3                # 34 - durations header
     arch = _archetypes()
-    wcell(tpl, 1, 1, "Effort templates - hrs/wk per person by level, + phase shape",
-          F_TITLE)
-    tpl_hdr = ["Archetype"] + TEMPLATE_LEVELS + \
+    wcell(tpl, 1, 1, "Templates & allocation parameters", F_TITLE)
+    tpl_hdr = ["Archetype (legacy)"] + TEMPLATE_LEVELS + \
         ["Typical duration (wks)", "Front phase fraction",
          "Front intensity (x)", "Tail intensity (x)"]
-    style_header(tpl, 2, tpl_hdr,
-                 [30, 9, 7, 9, 7, 15, 9, 12, 12, 12, 12])
+    style_header(tpl, 2, tpl_hdr, [30, 9, 7, 9, 7, 15, 9, 12, 12, 12, 12])
     for i, (name, hrs, dur, f, m1, m2) in enumerate(arch, start=3):
         wcell(tpl, i, 1, name, F_BODY)
         for j, h in enumerate(hrs, start=2):             # B..H hrs by level
@@ -586,15 +649,53 @@ def build(deals, assigns, review, out_path):
         wcell(tpl, i, 11, m1, F_INPUT, FILL_YELLOW, "0.00")
         wcell(tpl, i, 12, f'=IF((1-$J{i})=0,1,(1-$J{i}*$K{i})/(1-$J{i}))',
               F_BODY, fmt="0.00")                          # m2 conserves avg=1
-    note_row = TN + 2
-    wcell(tpl, note_row, 1,
-          "All hrs/wk and phase numbers are PLACEHOLDERS (yellow) - tune in the "
-          "template workshop. Each deal on the Deals tab picks an Archetype; its "
-          "per-level hrs/wk then drive that deal's assignments (an Override on an "
-          "assignment still wins). Front intensity x tail, weighted by phase "
-          "length, averages to 1.0, so phasing only redistributes hours across a "
-          "deal's timeline - it never changes the total. Tail intensity is a "
-          "formula (leave it); it is what keeps the average at 1.0.", F_NOTE)
+    wcell(tpl, TN + 2, 1, "^ LEGACY effort archetypes (Step 3) - superseded by "
+                          "the fee->hours parameters below; kept for reference.",
+          F_NOTE)
+
+    # --- Step 8: fee -> hours allocation parameters (Step 9 wires them in) ---
+    wcell(tpl, TW_TITLE, 1,
+          "FEE -> HOURS ALLOCATION PARAMETERS  (fill the yellow cells with the "
+          "team's real numbers; wired to hours in Step 9)", F_BOLD, FILL_YELLOW)
+    # rate card ($/hr by level)
+    wcell(tpl, TW_RATE - 1, 1, "Rate card - $/hr by level", F_BOLD)
+    wcell(tpl, TW_RATE, 1, "Level", F_HDR, FILL_HDR)
+    wcell(tpl, TW_RATE, 2, "$ / hr", F_HDR, FILL_HDR)
+    for k, (lvl, rate) in enumerate(RATE_CARD.items()):
+        rr = TW_RATE + 1 + k
+        wcell(tpl, rr, 1, lvl, F_BODY)
+        wcell(tpl, rr, 2, rate, F_INPUT, FILL_YELLOW, "$#,##0")
+    # split matrix (workstream group x level, each row = 100%)
+    wcell(tpl, TW_SPLIT - 1, 1,
+          "Fee split % by level, per workstream group (each row must total 100%)",
+          F_BOLD)
+    for j, t in enumerate(["Workstream group"] + TEMPLATE_LEVELS + ["Check ="], 1):
+        wcell(tpl, TW_SPLIT, j, t, F_HDR, FILL_HDR)
+    for k, grp in enumerate(WS_GROUPS):
+        rr = TW_SPLIT + 1 + k
+        wcell(tpl, rr, 1, grp, F_BODY)
+        for j, pct in enumerate(SPLIT_PLACEHOLDER[grp], start=2):
+            wcell(tpl, rr, j, pct / 100.0, F_INPUT, FILL_YELLOW, "0%")
+        wcell(tpl, rr, 9, f'=SUM($B{rr}:$H{rr})', F_BODY, fmt="0%")   # checksum
+    tpl.conditional_formatting.add(
+        f"I{TW_SPLIT+1}:I{TW_SPLIT+len(WS_GROUPS)}",
+        FormulaRule(formula=[f"ABS(I{TW_SPLIT+1}-1)>0.001"], fill=FILL_RED))
+    # default duration per group
+    wcell(tpl, TW_DUR - 1, 1,
+          "Default duration (weeks) per group - used when a deal has no dates",
+          F_BOLD)
+    wcell(tpl, TW_DUR, 1, "Workstream group", F_HDR, FILL_HDR)
+    wcell(tpl, TW_DUR, 2, "Weeks", F_HDR, FILL_HDR)
+    for k, (grp, wk) in enumerate(GROUP_DURATION.items()):
+        rr = TW_DUR + 1 + k
+        wcell(tpl, rr, 1, grp, F_BODY)
+        wcell(tpl, rr, 2, wk, F_INPUT, FILL_YELLOW, "0")
+    wcell(tpl, TW_DUR + len(GROUP_DURATION) + 2, 1,
+          "All values above are PLACEHOLDERS. Mechanism (decided Jul 21): "
+          "hours(level) = fee(group) x split%(group,level) / rate(level), summed "
+          "over a deal's priced workstream groups, spread over its kick-off->"
+          "delivery weeks (or the default duration when no dates). Step 9 adds the "
+          "per-group fee columns on Deals and wires this in.", F_NOTE)
     tpl.freeze_panes = "B3"
 
     # ---------------- Actuals (Step 4: NetSuite time entries + matching)
@@ -796,19 +897,28 @@ def build(deals, assigns, review, out_path):
           "everywhere automatically.", F_NOTE)
 
     # ---------------- Deals
+    # K-P (11-16) held the old attribute placeholders (txn type / entity class /
+    # scope / industry / complexity / timeline) - empty for every real deal and
+    # superseded by Justine's workstream taxonomy (appended AH-AX, Step 8). They
+    # are retired in place: relabelled, dropdowns removed, columns hidden - not
+    # deleted (rule 5).
     hdr = ["Project ID", "Client (as filed)", "Primary client",
            "End client / target", "Referral?", "Lifecycle", "Phase",
-           "Probability", "Expected start", "Expected end", "Transaction type",
-           "Entity classification", "Scope", "Industry", "Complexity flags",
-           "Timeline", "# staffed", "Planned hrs/wk", "Source status (Jul 9)",
-           "Notes", "Effort archetype", "Front x (calc)", "Tail x (calc)",
-           "Front frac (calc)", "Phase split date (calc)", "Added on",
-           "SCENARIO probability", "SCENARIO start", "SCENARIO end",
-           "Eff. scn prob (calc)", "Eff. scn start (calc)", "Eff. scn end (calc)",
-           "Scenario split (calc)"]
-    style_header(wd, 1, hdr, [22, 38, 26, 22, 8, 14, 13, 10, 11, 11, 13, 13, 14,
-                              14, 16, 11, 8, 10, 16, 30, 26, 10, 10, 10, 14, 11,
-                              14, 12, 12, 11, 12, 12, 14])
+           "Probability", "Expected start", "Expected end",
+           "(retired: workstream scoping ->)", "(retired)", "(retired)",
+           "(retired)", "(retired)", "(retired)", "# staffed", "Planned hrs/wk",
+           "Source status (Jul 9)", "Notes", "Effort archetype (legacy)",
+           "Front x (calc)", "Tail x (calc)", "Front frac (calc)",
+           "Phase split date (calc)", "Added on", "SCENARIO probability",
+           "SCENARIO start", "SCENARIO end", "Eff. scn prob (calc)",
+           "Eff. scn start (calc)", "Eff. scn end (calc)", "Scenario split (calc)"]
+    hdr += [h for (_, h, _, _) in WS_TAXONOMY]
+    widths = [22, 38, 26, 22, 8, 14, 13, 10, 11, 11, 13, 13, 14, 14, 16, 11, 8,
+              10, 16, 30, 20, 10, 10, 10, 14, 11, 14, 12, 12, 11, 12, 12, 14]
+    widths += [16] * len(WS_TAXONOMY)
+    style_header(wd, 1, hdr, widths)
+    for col in range(11, 17):                            # hide retired K-P
+        wd.column_dimensions[get_column_letter(col)].hidden = True
     example = dict(code="EXAMPLE_0", client="Example Client LLC : Example Target",
                    primary="Example Client LLC", end="Example Target",
                    referral="No", life="Active", source="(example)")
@@ -832,11 +942,7 @@ def build(deals, assigns, review, out_path):
               FILL_YELLOW if live and not is_ex else None, "yyyy-mm-dd")
         wcell(wd, r, 10, dt.date(2026, 10, 30) if is_ex else None, F_INPUT,
               FILL_YELLOW if live and not is_ex else None, "yyyy-mm-dd")
-        for col, val in [(11, "Stock"), (12, "Corp"), (13, "TDD + Structuring"),
-                         (14, "Renewables"), (15, "Cross-border"),
-                         (16, "Standard")]:
-            wcell(wd, r, col, val if is_ex else None, F_INPUT,
-                  FILL_YELLOW if live and not is_ex else None)
+        # K-P retired: no attribute values written (columns hidden)
         wcell(wd, r, 19, d["source"])
         if is_ex:
             wcell(wd, r, 20, "EXAMPLE row - shows the expected formats; delete "
@@ -853,6 +959,11 @@ def build(deals, assigns, review, out_path):
               "yyyy-mm-dd")
         wcell(wd, r, 29, None, F_INPUT, FILL_VIOLET if live and not is_ex else None,
               "yyyy-mm-dd")
+        # Step 8: workstream scoping inputs (AH-AX). Example row shows the format;
+        # real deals get blank yellow cells for the team to tick.
+        for col, _hdr, _lst, ex_val in WS_TAXONOMY:
+            wcell(wd, r, col, ex_val if is_ex else None, F_INPUT,
+                  FILL_YELLOW if live and not is_ex else None)
         r += 1
     # archetype lookups: front x (V), tail x (W), front frac (X) from Templates;
     # phase split date (Y) = start + frac*(end-start), only when BOTH dates and an
@@ -889,17 +1000,17 @@ def build(deals, assigns, review, out_path):
         wcell(wd, rr, 33,
               f'=IF(OR($U{rr}="",$AE{rr}="",$AF{rr}="",$X{rr}=""),"",'
               f'$AE{rr}+$X{rr}*($AF{rr}-$AE{rr}))', F_BODY, fmt="yyyy-mm-dd")
-        for ccol in range(1, 34):
+        for ccol in range(1, WS_LAST + 1):
             wd.cell(row=rr, column=ccol).border = THIN_BTM
     wd.freeze_panes = "B2"
     wd.conditional_formatting.add(
-        f"A2:AG{LAST_D}",
+        f"A2:{get_column_letter(WS_LAST)}{LAST_D}",
         FormulaRule(formula=['OR($F2="Dead",$F2="Closed",$F2="Invoiced")'],
                     fill=FILL_GREY))
-    for col, name in [("F", "LifecycleList"), ("G", "PhaseList"),
-                      ("K", "TxnTypeList"), ("L", "EntityClassList"),
-                      ("M", "ScopeList"), ("P", "TimelineList"),
-                      ("E", "YesNoList"), ("U", "ArchetypeList")]:
+    dv_specs = [("F", "LifecycleList"), ("G", "PhaseList"), ("E", "YesNoList"),
+                ("U", "ArchetypeList")]                   # K/L/M/P dropdowns retired
+    dv_specs += [(get_column_letter(col), lst) for col, _h, lst, _e in WS_TAXONOMY]
+    for col, name in dv_specs:
         dv = DataValidation(type="list", formula1=name, allow_blank=True)
         wd.add_data_validation(dv)
         dv.add(f"{col}2:{col}{LAST_D}")
@@ -1369,10 +1480,10 @@ def build(deals, assigns, review, out_path):
         "Proposal probabilities defaulted", "Deal dates blank",
         "Weekly capacity is a placeholder",
         "Level-default hours are placeholders",
-        "Effort templates are placeholders",
         "NetSuite actuals - go-live setup",
         "Check-in tab definitions to confirm",
-    }
+        "Fee-allocation parameters awaited",
+    }   # "Effort templates are placeholders" -> now legacy, routed to audit
     blanket = [
         ("Proposal probabilities defaulted", "", "All 'Proposal' deals",
          "Probability prefilled at 50% (WIP deals at 100%)",
@@ -1387,10 +1498,16 @@ def build(deals, assigns, review, out_path):
         ("Level-default hours are placeholders", "", "Settings B8:B14",
          "Hours/wk per level are directional guesses; used only for deals with "
          "no archetype set", "Tune with the team, or assign archetypes instead"),
-        ("Effort templates are placeholders", "", "Templates tab",
-         "Step 3 added deal archetypes -> hrs/wk by level + a diligence/tail "
-         "phase shape. All numbers are directional placeholders.",
-         "Tune in the template workshop; then set each deal's Archetype on Deals"),
+        ("Effort templates are placeholders", "", "Templates tab (legacy)",
+         "Step 3 archetypes -> hrs/wk by level. Now LEGACY - superseded by the "
+         "fee->workstream model (Step 8/9); kept hidden for reference.",
+         "No action - replaced by the fee-allocation parameters below"),
+        ("Fee-allocation parameters awaited", "", "Templates tab + Deals scoping",
+         "Step 8 added Justine's workstream taxonomy (Deals AH-AX) and the "
+         "fee->hours parameter tables (Templates): rate card by level, split-% "
+         "matrix by workstream group, default durations - all PLACEHOLDERS.",
+         "Provide the real rate card + level-split % matrix; then Step 9 wires "
+         "per-deal fees to hours"),
         ("NetSuite actuals - go-live setup", "", "Actuals tab",
          "Step 4 added the actuals import + Variance calibration, demonstrated "
          "with a fabricated 20-row sample (flagged). Verify does the register "
@@ -1494,19 +1611,22 @@ def build(deals, assigns, review, out_path):
          "100% - and this tab shows who would blow up, Live vs Scenario, "
          "without touching the real plan. Blank overrides = identical to Live.",
          F_BODY),
-        ("  Deals - one row per engagement: lifecycle, probability, dates and "
-         "deal attributes (dropdowns). The violet columns at the far right are "
-         "scenario overrides (see the Scenario tab).", F_BODY),
+        ("  Deals - one row per engagement: lifecycle, probability, dates. The "
+         "yellow WORKSTREAM SCOPING columns (far right, 'TDD deal type' onward) "
+         "are Justine's taxonomy - tick what's in scope per engagement. The "
+         "violet columns are scenario overrides. (The old attribute columns K-P "
+         "are retired and hidden.)", F_BODY),
         ("  Assignments - one row per person on a deal. 'Active?' controls "
          "whether it counts. Hours come from the deal's archetype (or the level "
          "default if no archetype) unless you set an Override. Columns N onward "
          "('Eff. start/end', 'Seg1/Seg2 ...') are calculation helpers that let "
          "Capacity add up fast and phase the load - leave them alone.", F_BODY),
         ("  Roster - the team, weekly capacity, live utilization.", F_BODY),
-        ("  Templates - deal archetypes (e.g. Buy-side TDD, Structuring, Tax "
-         "equity): hrs/wk per person by level + a phase shape (heavier during "
-         "diligence, lighter after). Set a deal's 'Effort archetype' on Deals "
-         "and its assignments pick up these hours automatically.", F_BODY),
+        ("  Templates - the fee->hours allocation parameters: rate card ($/hr "
+         "by level), fee split-% matrix by workstream group, and default "
+         "durations. Fill the yellow cells with the team's real numbers; Step 9 "
+         "wires per-deal fees into hours. (The old effort archetypes above are "
+         "legacy, kept for reference.)", F_BODY),
         ("  Actuals - paste the NetSuite time export (blue columns); it matches "
          "each row to a deal and person and computes variance vs the plan. Fill "
          "the name-mapping table (right) when NetSuite names differ from roster "
@@ -1611,13 +1731,17 @@ def build(deals, assigns, review, out_path):
     A0, A9 = 7, 6 + ACTUALS_ROWS
     unlock_specs = {
         "Deals": [(1, 2, 1, LAST_D), (3, 2, 16, LAST_D), (20, 2, 21, LAST_D),
-                  (26, 2, 29, LAST_D)],          # 26 Added-on + 27-29 scenario
+                  (26, 2, 29, LAST_D),           # 26 Added-on + 27-29 scenario
+                  (WS_FIRST, 2, WS_LAST, LAST_D)],   # 34-50 workstream scoping
         "Assignments": [(1, 2, 1, LAST_A), (3, 2, 3, LAST_A), (6, 2, 8, LAST_A),
                         (17, 2, 17, LAST_A)],
         "Roster": [(1, 2, 4, ROSTER_LAST)],
-        "Templates": [(1, 3, 11, TN)],
+        # archetype inputs A3:K10 + fee params (rate card, split matrix, durations)
+        "Templates": [(1, 3, 11, TN), (2, TW_RATE + 1, 2, TW_RATE + len(RATE_CARD)),
+                      (2, TW_SPLIT + 1, 8, TW_SPLIT + len(WS_GROUPS)),
+                      (2, TW_DUR + 1, 2, TW_DUR + len(GROUP_DURATION))],
         "Actuals": [(1, A0, 4, A9), (14, 5, 15, 44)],
-        "Settings": [(2, 3, 2, 4), (2, 8, 2, 14), (2, 19, 2, 20), (4, 8, 12, 30)],
+        "Settings": [(2, 3, 2, 4), (2, 8, 2, 14), (2, 19, 2, 20), (4, 8, 17, 30)],
         "Review": [(6, RVH + 1, 6, RVH + 60)],
     }
     unlocked = Protection(locked=False)
