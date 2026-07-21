@@ -159,6 +159,26 @@ SPLIT_PLACEHOLDER = {   # group -> [Partner, MD, Director, VP, SA, Renewable, As
 GROUP_DURATION = OrderedDict([("TDD", 8), ("Modeling", 6), ("Structuring", 6),
                               ("Legal docs review", 4), ("Other", 6)])
 
+# ---- Step 9: fee -> hours engine. New Deals columns appended after AX (50):
+#   hours(level) = SUM over priced workstream groups of
+#                  fee(group) * split%(group,level) / rate(level) / duration(group)
+# spread flat over the deal's kick-off->delivery window (or the group's default
+# duration when dates are blank); per assignment = level hrs/wk / active assignees
+# at that level. Gated on the deal having a fee, so with no fees entered every
+# live number is unchanged (fee=0 -> fall through to archetype/level-default).
+FEE_FIRST = WS_LAST + 1                          # 51 AY..BC: fee $ per group (input)
+FEE_LAST = FEE_FIRST + len(WS_GROUPS) - 1        # 55 BC
+FEE_TOTAL = FEE_LAST + 1                          # 56 BD: SUM of the group fees (calc)
+DUR_FIRST = FEE_TOTAL + 1                         # 57 BE..BI: duration wks/group (calc)
+DUR_LAST = DUR_FIRST + len(WS_GROUPS) - 1         # 61 BI
+DW_FIRST = DUR_LAST + 1                           # 62 BJ..BP: fee hrs/wk by level (calc)
+DW_LAST = DW_FIRST + len(RATE_CARD) - 1           # 68 BP
+DEALS_LAST_COL = DW_LAST                          # 68 - last Deals formula column
+# New Assignments helper columns appended after AN (40):
+A_FEETOT = 41                                     # AO: this deal's total fee (calc)
+A_FEEPP = 42                                      # AP: fee hrs/wk per person (calc)
+ASSIGN_LAST_COL = A_FEEPP                         # 42
+
 # ---- Step 4: NetSuite actuals. Seed name-mapping (NetSuite display name ->
 # roster person) and a FABRICATED 20-row sample so matching/variance can be
 # demonstrated and verified. The sample is clearly flagged in the workbook and
@@ -913,11 +933,21 @@ def build(deals, assigns, review, out_path):
            "SCENARIO start", "SCENARIO end", "Eff. scn prob (calc)",
            "Eff. scn start (calc)", "Eff. scn end (calc)", "Scenario split (calc)"]
     hdr += [h for (_, h, _, _) in WS_TAXONOMY]
+    # Step 9 fee->hours columns. The deal-weekly headers (BJ..BP) MUST be the exact
+    # level names - Assignments looks them up by MATCH($F,Deals!$BJ$1:$BP$1,0).
+    hdr += [f"Fee $ - {g}" for g in WS_GROUPS]           # AY..BC (input)
+    hdr += ["Fee $ total (calc)"]                        # BD
+    hdr += [f"Dur wk - {g} (calc)" for g in WS_GROUPS]   # BE..BI
+    hdr += list(RATE_CARD.keys())                        # BJ..BP (exact level names)
     widths = [22, 38, 26, 22, 8, 14, 13, 10, 11, 11, 13, 13, 14, 14, 16, 11, 8,
               10, 16, 30, 20, 10, 10, 10, 14, 11, 14, 12, 12, 11, 12, 12, 14]
     widths += [16] * len(WS_TAXONOMY)
+    widths += [13] * len(WS_GROUPS) + [12] + [10] * len(WS_GROUPS) \
+        + [11] * len(RATE_CARD)
     style_header(wd, 1, hdr, widths)
     for col in range(11, 17):                            # hide retired K-P
+        wd.column_dimensions[get_column_letter(col)].hidden = True
+    for col in range(DUR_FIRST, DW_LAST + 1):            # hide fee calc helpers
         wd.column_dimensions[get_column_letter(col)].hidden = True
     example = dict(code="EXAMPLE_0", client="Example Client LLC : Example Target",
                    primary="Example Client LLC", end="Example Target",
@@ -964,6 +994,13 @@ def build(deals, assigns, review, out_path):
         for col, _hdr, _lst, ex_val in WS_TAXONOMY:
             wcell(wd, r, col, ex_val if is_ex else None, F_INPUT,
                   FILL_YELLOW if live and not is_ex else None)
+        # Step 9: per-workstream-group fee inputs (AY..BC). Example shows the
+        # $ format; live deals get yellow input cells to price. Blank = no fee ->
+        # that deal keeps its archetype/level-default hours (Step 8 invariant).
+        ex_fees = {"TDD": 250000, "Modeling": 90000}
+        for k, g in enumerate(WS_GROUPS):
+            wcell(wd, r, FEE_FIRST + k, ex_fees.get(g) if is_ex else None,
+                  F_INPUT, FILL_YELLOW if live and not is_ex else None, "$#,##0")
         r += 1
     # archetype lookups: front x (V), tail x (W), front frac (X) from Templates;
     # phase split date (Y) = start + frac*(end-start), only when BOTH dates and an
@@ -1000,11 +1037,35 @@ def build(deals, assigns, review, out_path):
         wcell(wd, rr, 33,
               f'=IF(OR($U{rr}="",$AE{rr}="",$AF{rr}="",$X{rr}=""),"",'
               f'$AE{rr}+$X{rr}*($AF{rr}-$AE{rr}))', F_BODY, fmt="yyyy-mm-dd")
-        for ccol in range(1, WS_LAST + 1):
+        # --- Step 9 fee->hours (calc; leave alone). Fee total (BD) gates the
+        # engine; durations (BE..BI) are the deal's kick-off->delivery window in
+        # weeks (>=1) or the group default when dates are blank; deal-weekly hours
+        # by level (BJ..BP) = SUM_g fee_g*split%(g,level)/rate(level)/dur_g, and
+        # collapse to 0 when the deal has no fee (preserving the Step 8 invariant).
+        fee_a, fee_z = get_column_letter(FEE_FIRST), get_column_letter(FEE_LAST)
+        bd = get_column_letter(FEE_TOTAL)
+        wcell(wd, rr, FEE_TOTAL, f'=IF($A{rr}="","",SUM(${fee_a}{rr}:${fee_z}{rr}))',
+              F_BODY, fmt="$#,##0")
+        for k in range(len(WS_GROUPS)):
+            dflt = f'Templates!$B${TW_DUR + 1 + k}'
+            wcell(wd, rr, DUR_FIRST + k,
+                  f'=IF($A{rr}="","",IF(AND($I{rr}<>"",$J{rr}<>""),'
+                  f'MAX(1,($J{rr}-$I{rr})/7),{dflt}))', F_LINK, fmt="0.0")
+        for j in range(len(RATE_CARD)):
+            terms = "+".join(
+                f'${get_column_letter(FEE_FIRST + k)}{rr}'
+                f'*Templates!${get_column_letter(2 + j)}${TW_SPLIT + 1 + k}'
+                f'/${get_column_letter(DUR_FIRST + k)}{rr}'
+                for k in range(len(WS_GROUPS)))
+            rate = f'Templates!$B${TW_RATE + 1 + j}'
+            wcell(wd, rr, DW_FIRST + j,
+                  f'=IF(OR($A{rr}="",${bd}{rr}=0),0,({terms})/{rate})',
+                  F_LINK, fmt="0.0")
+        for ccol in range(1, DEALS_LAST_COL + 1):
             wd.cell(row=rr, column=ccol).border = THIN_BTM
     wd.freeze_panes = "B2"
     wd.conditional_formatting.add(
-        f"A2:{get_column_letter(WS_LAST)}{LAST_D}",
+        f"A2:{get_column_letter(DEALS_LAST_COL)}{LAST_D}",
         FormulaRule(formula=['OR($F2="Dead",$F2="Closed",$F2="Invoiced")'],
                     fill=FILL_GREY))
     dv_specs = [("F", "LifecycleList"), ("G", "PhaseList"), ("E", "YesNoList"),
@@ -1028,10 +1089,12 @@ def build(deals, assigns, review, out_path):
            "scn end (calc)", "scn eff start (calc)", "scn eff end (calc)",
            "scn split (calc)", "scn seg1 start (calc)", "scn seg1 end (calc)",
            "scn seg1 hrs (calc)", "scn seg2 start (calc)", "scn seg2 end (calc)",
-           "scn seg2 hrs (calc)"]
+           "scn seg2 hrs (calc)",
+           "Deal fee total (calc)", "Fee hrs/wk pp (calc)"]
     style_header(wa, 1, hdr, [16, 16, 24, 26, 12, 16, 10, 10, 10, 10, 10, 11, 11,
                               11, 11, 24, 34, 16, 9, 9, 11, 11, 11, 10, 11, 11, 10,
-                              9, 9, 11, 11, 11, 11, 11, 11, 11, 10, 11, 11, 10])
+                              9, 9, 11, 11, 11, 11, 11, 11, 11, 10, 11, 11, 10,
+                              12, 13])
     rows = [dict(person="Tania", code="EXAMPLE_0", staffed_as="Partner",
                  active="Inactive", raw="",
                  note="EXAMPLE row - Inactive so it counts nowhere; delete "
@@ -1060,10 +1123,14 @@ def build(deals, assigns, review, out_path):
               F_LINK)
         wcell(wa, rr, 5, f'=IF($C{rr}="","",IFERROR(INDEX(Deals!$F$2:$F${LAST_D},'
                          f'MATCH($C{rr},Deals!$A$2:$A${LAST_D},0)),"?"))', F_LINK)
-        # planned hrs/wk: 0 if inactive -> Override -> archetype rate -> flat default
+        # planned hrs/wk: 0 if inactive -> Override -> fee-driven (Step 9) ->
+        # archetype rate -> flat default. The fee term (AP) is used only when the
+        # deal carries a fee (AO>0), so with no fees this is byte-identical to Step 8.
+        ao, ap = get_column_letter(A_FEETOT), get_column_letter(A_FEEPP)
         wcell(wa, rr, 9,
               f'=IF(OR($A{rr}="",$G{rr}<>"Active"),0,IF($H{rr}<>"",$H{rr},'
-              f'IF(AND($R{rr}<>"",IFERROR({arate},0)>0),{arate},{flat})))',
+              f'IF(${ao}{rr}>0,${ap}{rr},'
+              f'IF(AND($R{rr}<>"",IFERROR({arate},0)>0),{arate},{flat}))))',
               F_BODY, fmt="0.0")
         wcell(wa, rr, 10, f'=IF($C{rr}="",0,IFERROR(INDEX(Deals!$H$2:$H${LAST_D},'
                           f'MATCH($C{rr},Deals!$A$2:$A${LAST_D},0)),0))', F_LINK,
@@ -1089,11 +1156,17 @@ def build(deals, assigns, review, out_path):
               fmt="0.00")                                         # tail x (m2)
         wcell(wa, rr, 21, safe_lookup(rr, LAST_D, f'Deals!$Y$2:$Y${LAST_D}'),
               F_LINK, fmt="yyyy-mm-dd")                           # split date
-        # segment 1 (front): [eff-start, split] at m1; if no split, all-time flat
-        wcell(wa, rr, 22, f'=IF($U{rr}="",DATE(1900,1,1),$N{rr})', F_BODY,
-              fmt="yyyy-mm-dd")
-        wcell(wa, rr, 23, f'=IF($U{rr}="",DATE(2100,12,31),$U{rr})', F_BODY,
-              fmt="yyyy-mm-dd")
+        # segment 1 (front): [eff-start, split] at m1 when archetype-phased; a
+        # fee-priced deal (AO>0) with both dates but no archetype windows flat to
+        # [eff-start, eff-end] (Step 9 even spread); otherwise all-time flat. With
+        # no fee this collapses to the Step 3 behaviour exactly. seg1 hrs (X, below)
+        # is unchanged - it is already K (flat) whenever there is no archetype split.
+        feewin = f'AND(${ao}{rr}>0,$L{rr}<>"",$M{rr}<>"")'
+        wcell(wa, rr, 22, f'=IF(OR($U{rr}<>"",{feewin}),$N{rr},DATE(1900,1,1))',
+              F_BODY, fmt="yyyy-mm-dd")
+        wcell(wa, rr, 23,
+              f'=IF($U{rr}<>"",$U{rr},IF({feewin},$O{rr},DATE(2100,12,31)))',
+              F_BODY, fmt="yyyy-mm-dd")
         wcell(wa, rr, 24, f'=IF($U{rr}="",$K{rr},$K{rr}*$S{rr})', F_BODY, fmt="0.0")
         # segment 2 (tail): (split, eff-end] at m2; empty range when no split
         wcell(wa, rr, 25, f'=IF($U{rr}="",DATE(2100,12,31),$U{rr}+1)', F_BODY,
@@ -1121,10 +1194,13 @@ def build(deals, assigns, review, out_path):
               fmt="yyyy-mm-dd")                                    # scn eff end
         wcell(wa, rr, 34, safe_lookup(rr, LAST_D, f'Deals!$AG$2:$AG${LAST_D}'),
               F_LINK, fmt="yyyy-mm-dd")                            # scn split
-        wcell(wa, rr, 35, f'=IF($AH{rr}="",DATE(1900,1,1),$AF{rr})', F_BODY,
+        scnwin = f'AND(${ao}{rr}>0,$AD{rr}<>"",$AE{rr}<>"")'
+        wcell(wa, rr, 35,
+              f'=IF(OR($AH{rr}<>"",{scnwin}),$AF{rr},DATE(1900,1,1))', F_BODY,
               fmt="yyyy-mm-dd")                                    # scn seg1 start
-        wcell(wa, rr, 36, f'=IF($AH{rr}="",DATE(2100,12,31),$AH{rr})', F_BODY,
-              fmt="yyyy-mm-dd")                                    # scn seg1 end
+        wcell(wa, rr, 36,
+              f'=IF($AH{rr}<>"",$AH{rr},IF({scnwin},$AG{rr},DATE(2100,12,31)))',
+              F_BODY, fmt="yyyy-mm-dd")                            # scn seg1 end
         wcell(wa, rr, 37, f'=IF($AH{rr}="",$AC{rr},$AC{rr}*$S{rr})', F_BODY,
               fmt="0.0")                                           # scn seg1 hrs
         wcell(wa, rr, 38, f'=IF($AH{rr}="",DATE(2100,12,31),$AH{rr}+1)', F_BODY,
@@ -1132,11 +1208,28 @@ def build(deals, assigns, review, out_path):
         wcell(wa, rr, 39, f'=IF($AH{rr}="",DATE(1900,1,1),$AG{rr})', F_BODY,
               fmt="yyyy-mm-dd")                                    # scn seg2 end
         wcell(wa, rr, 40, f'=IF($AH{rr}="",0,$AC{rr}*$T{rr})', F_BODY, fmt="0.0")
-        for ccol in range(1, 41):
+        # --- Step 9 fee helpers (calc; leave alone). AO = this deal's total fee
+        # (the has-fee gate); AP = fee hrs/wk for this row's level, split evenly
+        # across the active assignees staffed at that level on this deal.
+        dbd = get_column_letter(FEE_TOTAL)                       # BD
+        dwf, dwl = get_column_letter(DW_FIRST), get_column_letter(DW_LAST)  # BJ, BP
+        wcell(wa, rr, A_FEETOT,
+              f'=IF($C{rr}="",0,IFERROR(INDEX(Deals!${dbd}$2:${dbd}${LAST_D},'
+              f'MATCH($C{rr},Deals!$A$2:$A${LAST_D},0)),0))', F_LINK, fmt="$#,##0")
+        assignees = (f'COUNTIFS(Assignments!$C$2:$C${LAST_A},$C{rr},'
+                     f'Assignments!$F$2:$F${LAST_A},$F{rr},'
+                     f'Assignments!$G$2:$G${LAST_A},"Active")')
+        dwlook = (f'INDEX(Deals!${dwf}$2:${dwl}${LAST_D},'
+                  f'MATCH($C{rr},Deals!$A$2:$A${LAST_D},0),'
+                  f'MATCH($F{rr},Deals!${dwf}$1:${dwl}$1,0))')
+        wcell(wa, rr, A_FEEPP,
+              f'=IF(${ao}{rr}=0,0,IFERROR({dwlook}/{assignees},0))',
+              F_LINK, fmt="0.0")
+        for ccol in range(1, ASSIGN_LAST_COL + 1):
             wa.cell(row=rr, column=ccol).border = THIN_BTM
     wa.freeze_panes = "D2"
     wa.conditional_formatting.add(
-        f"A2:AN{LAST_A}",
+        f"A2:{get_column_letter(ASSIGN_LAST_COL)}{LAST_A}",
         FormulaRule(formula=['$G2="Inactive"'], fill=FILL_GREY))
     for col, name in [("A", "RosterNames"), ("C", "DealCodes"),
                       ("F", "LevelList"), ("G", "ActiveList")]:
@@ -1146,10 +1239,11 @@ def build(deals, assigns, review, out_path):
 
     # ---------------- Capacity
     wcell(cap, 1, 1, "Capacity - planned hours per person per week", F_TITLE)
-    wcell(cap, 2, 1, '="Probability weighting: "&Settings!$B$4&"   |   A deal '
-                     'with an Archetype + dates is time-phased (heavier during '
-                     'the front/diligence phase, lighter after); a deal missing '
-                     'either counts flat in every week."', F_NOTE)
+    wcell(cap, 2, 1, '="Probability weighting: "&Settings!$B$4&"   |   Fees set '
+                     'on a deal drive its hours, spread evenly across its dates; '
+                     'a deal with an Archetype + dates is front/tail phased '
+                     'instead; a deal with no dates counts flat in every week."',
+          F_NOTE)
     wcell(cap, 4, 1, "Person", F_HDR, FILL_HDR)
     wcell(cap, 4, 2, "Cap hrs/wk", F_HDR, FILL_HDR)
     cap.column_dimensions["A"].width = 16
@@ -1497,17 +1591,23 @@ def build(deals, assigns, review, out_path):
          "Set each person's real weekly capacity"),
         ("Level-default hours are placeholders", "", "Settings B8:B14",
          "Hours/wk per level are directional guesses; used only for deals with "
-         "no archetype set", "Tune with the team, or assign archetypes instead"),
+         "no fee and no archetype set", "Tune with the team; deals priced with "
+         "fees ignore these"),
         ("Effort templates are placeholders", "", "Templates tab (legacy)",
          "Step 3 archetypes -> hrs/wk by level. Now LEGACY - superseded by the "
          "fee->workstream model (Step 8/9); kept hidden for reference.",
          "No action - replaced by the fee-allocation parameters below"),
-        ("Fee-allocation parameters awaited", "", "Templates tab + Deals scoping",
-         "Step 8 added Justine's workstream taxonomy (Deals AH-AX) and the "
-         "fee->hours parameter tables (Templates): rate card by level, split-% "
-         "matrix by workstream group, default durations - all PLACEHOLDERS.",
-         "Provide the real rate card + level-split % matrix; then Step 9 wires "
-         "per-deal fees to hours"),
+        ("Fee-allocation parameters awaited", "", "Templates tab + Deals fees",
+         "The fee->hours engine is LIVE (Step 9): enter a fee per workstream "
+         "group on a deal (Deals 'Fee $' columns) and it becomes hours by level = "
+         "fee x split% / rate, spread over the deal's dates (or a default "
+         "duration), split among the people staffed at each level. The rate card "
+         "and split-% matrix (Templates) are still PLACEHOLDERS until the team's "
+         "real numbers arrive.",
+         "Fill the real rate card + level-split % matrix (Templates yellow "
+         "cells), then price deals by entering fees. Note: a level the split "
+         "funds but nobody is staffed at shows no hours - staff it or the fee's "
+         "hours for that level are not visible in Capacity."),
         ("NetSuite actuals - go-live setup", "", "Actuals tab",
          "Step 4 added the actuals import + Variance calibration, demonstrated "
          "with a fabricated 20-row sample (flagged). Verify does the register "
@@ -1612,15 +1712,17 @@ def build(deals, assigns, review, out_path):
          "without touching the real plan. Blank overrides = identical to Live.",
          F_BODY),
         ("  Deals - one row per engagement: lifecycle, probability, dates. The "
-         "yellow WORKSTREAM SCOPING columns (far right, 'TDD deal type' onward) "
-         "are Justine's taxonomy - tick what's in scope per engagement. The "
-         "violet columns are scenario overrides. (The old attribute columns K-P "
-         "are retired and hidden.)", F_BODY),
+         "yellow WORKSTREAM SCOPING columns are Justine's taxonomy - tick what's "
+         "in scope. The yellow FEE $ columns (one per group: TDD, Modeling, "
+         "Structuring, Legal docs, Other) drive the hours - enter a fee and it "
+         "flows to hours-by-level through Templates. Violet columns are scenario "
+         "overrides. (Old attribute columns K-P are retired and hidden.)", F_BODY),
         ("  Assignments - one row per person on a deal. 'Active?' controls "
-         "whether it counts. Hours come from the deal's archetype (or the level "
-         "default if no archetype) unless you set an Override. Columns N onward "
-         "('Eff. start/end', 'Seg1/Seg2 ...') are calculation helpers that let "
-         "Capacity add up fast and phase the load - leave them alone.", F_BODY),
+         "whether it counts. Hours come from the deal's fees (split by level), or "
+         "its archetype, or the level default - unless you set an Override "
+         "(Override always wins). Columns N onward ('Eff. start/end', "
+         "'Seg1/Seg2 ...', 'Fee hrs/wk pp') are calculation helpers - leave them "
+         "alone.", F_BODY),
         ("  Roster - the team, weekly capacity, live utilization.", F_BODY),
         ("  Templates - the fee->hours allocation parameters: rate card ($/hr "
          "by level), fee split-% matrix by workstream group, and default "
@@ -1655,14 +1757,21 @@ def build(deals, assigns, review, out_path):
         ("", F_BODY),
         ("HOW TO", F_BOLD),
         ("  Add a deal: next blank row on Deals - Project ID, client, Lifecycle, "
-         "Probability, dates, attributes. Then staff it on Assignments.", F_BODY),
+         "Probability, dates, then fees + workstream scoping. Then staff it on "
+         "Assignments.", F_BODY),
         ("  Staff someone: new row on Assignments - pick Person and Project ID, "
-         "set Active? = Active. Hours come from the deal's archetype (or the "
-         "level default); type an Override for this deal if needed.", F_BODY),
-        ("  Estimate a deal's effort: set its 'Effort archetype' on Deals (a "
-         "dropdown). Everyone staffed on it then gets that archetype's hrs/wk "
-         "for their level. Add Expected start/end and the load auto-phases - "
-         "heavier during diligence, lighter afterward.", F_BODY),
+         "set Active? = Active. Hours come from the deal's fees (or archetype, or "
+         "the level default); type an Override for this deal if needed.", F_BODY),
+        ("  Price a deal (this drives hours): on Deals, enter the FEE $ for each "
+         "workstream group in scope. Hours by level = fee x split%(Templates) / "
+         "rate(Templates), spread evenly across the deal's Expected start/end (or "
+         "the group's default duration if dates are blank), then divided among "
+         "the people staffed at each level. Add dates so the hours land in the "
+         "right weeks - and make sure someone is staffed at each level the split "
+         "funds, or those hours have nowhere to show.", F_BODY),
+        ("  (Legacy) Effort archetype: an older per-deal effort shape on Deals, "
+         "superseded by fees. Leave blank unless a deal has no fee - a fee always "
+         "wins over an archetype.", F_BODY),
         ("  Roll someone off: set their row's Active? to Inactive (keeps "
          "history - do not delete).", F_BODY),
         ("  Deal dies / closes: set Lifecycle on Deals; its assignments stop "
@@ -1732,7 +1841,8 @@ def build(deals, assigns, review, out_path):
     unlock_specs = {
         "Deals": [(1, 2, 1, LAST_D), (3, 2, 16, LAST_D), (20, 2, 21, LAST_D),
                   (26, 2, 29, LAST_D),           # 26 Added-on + 27-29 scenario
-                  (WS_FIRST, 2, WS_LAST, LAST_D)],   # 34-50 workstream scoping
+                  (WS_FIRST, 2, WS_LAST, LAST_D),     # 34-50 workstream scoping
+                  (FEE_FIRST, 2, FEE_LAST, LAST_D)],  # 51-55 workstream fees
         "Assignments": [(1, 2, 1, LAST_A), (3, 2, 3, LAST_A), (6, 2, 8, LAST_A),
                         (17, 2, 17, LAST_A)],
         "Roster": [(1, 2, 4, ROSTER_LAST)],
