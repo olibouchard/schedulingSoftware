@@ -145,7 +145,67 @@ Delivered — what-if analysis, deliberately **isolated** from the live plan (in
 - **Isolation verified two ways:** (1) with no overrides, the scenario heatmap equals Capacity cell-for-cell, all 23 impact Changes = 0, team delta = 0, and every Steps-1–6 live number is unchanged; (2) setting B2V_1's scenario probability to 0% dropped exactly Lauren −5 and Jennifer Wu −10 (their planned hrs on it) in the Scenario tab while **Live stayed identical** (Deals planned still 15, their live capacity unchanged) and an unrelated person (Yiyi) didn't move. 0 errors across 49,337 cells.
 - **On §10 (web app trigger):** the scenario works, but it took ~17 parallel helper columns (Assignments AB–AN + Deals AA–AG) and is the workbook's most complex machinery — a fair signal that *further* analytical depth (multi-scenario compare, saved scenarios, Monte-Carlo over probabilities) is where a real app would pay off. Flagged for the team, not acted on.
 
-**This completes the Excel roadmap (Steps 1–7).** Further work is data tuning by the team (the open Review items) and operations, or reviving the web app (§10).
+**This completes the original Excel roadmap (Steps 1–7).** Feedback Round 1 (§5A) extends it with Steps 8–11.
+
+## 5A. Feedback Round 1 — power-user feedback (Justine, July 21) → Steps 8–11
+
+**Source:** Justine Morin's email of July 21, 2026 — the tracker's primary user; a working session on this feedback is scheduled for the same evening. The original is in French; the five points, faithfully rendered:
+
+1. **Too many tabs.** Cut the workbook to the essentials. (It currently has 12.)
+2. **Workstream mapping per engagement**, with her exact taxonomy (wording below is verbatim from the email and must be preserved in the dropdowns):
+   - **Tax Due Diligence — deal type** (pick one): Asset Deal (or DRE) · Partnership with push out · Partnership no push out · C Corporation · S Corporation
+   - **Target footprint:** Domestic only (Y/N)
+   - **Tax Due Diligence Scope** (pick one): Inquiry basis · Limited Procedures · Key Findings
+   - **Other TDD relevant scoping items:** Carve out · Non-US jurisdiction coordination · 8A / Taxand · N/A
+   - **Modeling** (each can be ticked or N/A — multi-select): Corporate tax modeling (sub-choice: Basic (no roll up) · Building roll up) · Tracking Model Review · Property tax Modeling · SALT Modeling · Tax Credit Assumption Review · Step Up Calculation · Section 382 limitation · FIRPTA Modeling · Other modeling complexities · N/A
+   - **Structuring:** Strawman deck · Structure paper · Opinion
+   - **Legal docs review**
+3. **Fee quote → allocation.** Enter each engagement's fee quote and have the allocation flow from it. She explicitly wants to brainstorm the mechanism ("on peut brainstorm sur ce point ce soir").
+4. **Tentative timelines with weekly-adjusting flags.** Timelines are the hardest thing to pin down — set tentative kick-off and delivery dates and have the flag adjust each week.
+5. **Shareable visual output.** The output should be easy to understand and share with the D/MD group; the back-end "matrix" tab she is happy to update separately.
+
+**How this lands on the existing design** — three lucky breaks and one open problem:
+
+- The legacy attribute columns (`Deals!K–P`: transaction type, entity class, scope, industry, complexity, timeline) are **empty for every real deal** (verified July 21 — only the EXAMPLE row has values; they were always yellow to-fill placeholders). Her taxonomy can therefore *replace* K–P outright with zero data loss. Re-verify emptiness in-session before replacing (rule 5).
+- Point 4 is largely the existing Check-in machinery: every flag already recomputes when the weekly as-of date (`Settings!B19`) is bumped — one cell, once a week, deterministic (no volatile `TODAY()`, per §7). The work is richer flag semantics and surfacing, not a new engine.
+- Points 1 and 5 solve each other: one **Dashboard** tab as the shareable front door, back-end tabs **hidden, never deleted** (they keep computing; unhide any time).
+- The open problem is point 3: the fee→allocation mechanism needs a design decision plus a **rate card by level** that only the team can supply. It is scheduled design-first (Step 9).
+
+**Decision checklist for the evening review** (settle these and Steps 8–11 are unblocked):
+
+1. **Essential tabs** — proposal: visible = **Dashboard · Deals · Assignments** (Roster too?); everything else hidden but live.
+2. **Fee → allocation mechanism** — pick Step 9 option A/B/C, and supply the rate card by level (real numbers).
+3. **Timeline flag set** — proposal: `Tentative (no dates) · Not started · Kick-off ≤1 wk · In flight · Delivery ≤2 wks · Overdue · Delivered`; confirm thresholds, and confirm the weekly ritual stays "update `Settings!B19` every Monday" (deterministic) rather than a volatile `TODAY()`.
+4. **Estimation driver** — recommendation: the ticked workstreams *replace* the 8 effort archetypes as the estimate driver (per-workstream hours by level, summed), with the archetype column kept hidden as legacy; confirm, and start pricing the per-workstream numbers.
+5. **Live-copy status** — has anyone begun editing the SharePoint copy directly? If yes, that file must come back before Step 8 (it gets diffed exactly like the Step 2 review round). Note: once real data entry starts — which this feedback round will trigger — the generator hits its bootstrap-only cutover (§6 rule 2).
+
+### Step 8 — Workstream scoping model · **Opus** · Large
+
+Point 2. First task: the **live-copy check** (diff the team's current file against the repo snapshot, Step-2-style; encode or cut over per §6 rule 2 if manual edits exist). Then:
+
+- Replace `Deals!K–P` (after re-verifying they're empty) with the scoping block, preserving her wording exactly: TDD deal type (dropdown) · Domestic only? (Y/N) · TDD scope (dropdown) · Other TDD scoping (dropdown incl. N/A) · a modeling block (one narrow column per item — Corporate tax modeling as a 3-way dropdown `Basic (no roll up) · Building roll up · blank=N/A`; the other eight as `Y / blank=N/A`) · Structuring (3 × Y/blank) · Legal docs review (Y/blank). Wide is fine — Justine owns the back-end matrix (point 5).
+- Rework **Templates** into per-workstream effort rows (hrs/wk by level per workstream item, plus a TDD-scope multiplier row set) — all placeholders, yellow, Review item. A deal's suggested rate = SUM over its ticked workstreams, flowing into `Assignments!I` through the **same choke point** the archetype rate uses today; archetype column kept as hidden legacy fallback.
+- Acceptance: taxonomy wording matches the email exactly; two synthetic deals hand-checked (estimate = sum of ticked workstream rates × scope multiplier); deals with nothing ticked fall back unchanged (live numbers identical — the Steps 1–7 invariant); 0 errors; §4 updated in the same commit.
+
+### Step 9 — Fees → allocation · design at the evening session, then **Opus** · Medium
+
+Point 3. Mechanism options to brainstorm (pick one tonight):
+
+- **A — Fee-driven hours:** fee ÷ level-blended rate card → target hours by level → suggested staffing; the workstream estimate becomes the cross-check.
+- **B — Fee as the check (recommended):** the Step 8 workstream estimate stays the hours driver; new columns compute implied fees (estimated hours × rate card) vs the quoted fee → an implied-realization % that flags deals scoped rich or poor. Least new machinery, most honest while template numbers are placeholders.
+- **C — Fee bands:** map fee ranges to effort tiers. Cheapest, crudest.
+
+Build after the decision: `Deals!Fee quote` input column (+ chosen mechanism), rate card by level in Settings (real numbers, else yellow placeholders + Review item). Acceptance: hand-checked math on 3 deals; deals without a fee entered are completely unaffected.
+
+### Step 10 — Timeline flags · **Sonnet** · Small
+
+Point 4. Rename `Deals!I/J` headers to **Kick-off date / Delivery date** (cells unchanged — zero formula churn), add a computed **Timeline status** column using the flag set from checklist item 3, driven by `Settings!B19` (blank dates → `Tentative`; a deal past delivery but still Active → `Overdue`). Surface it on Check-in §2 and the Step 11 Dashboard. Acceptance: a synthetic date matrix on a scratch copy exercises **every** flag branch (per §7's untested-path rule); bumping the as-of date one week moves the flags exactly as expected; 0 errors.
+
+### Step 11 — Dashboard + tab diet · **Opus** · Medium
+
+Points 1 + 5. A new **Dashboard** tab in position 1 — the D/MD share view: headline tiles (team utilization next 4 weeks, # over-allocated, # deals needing attention, upcoming deliveries), a compact capacity heat strip, and the timeline-flag list; print/PDF-ready, fully protected, zero inputs. Then the tab diet per checklist item 1: hide (never delete) the non-essential tabs via `sheet_state="hidden"` — they keep computing; Guide gains an "unhiding tabs" note; Check-in's content is absorbed into the Dashboard and the tab hidden. Acceptance: the file opens on Dashboard; hidden tabs still drive every number (0 errors, invariants hold); a PDF of the Dashboard is legible standalone; §4 gains a visibility column.
+
+**Order:** 8 → 9 → 10 → 11 (fees lean on the workstream mix; the Dashboard shows everything). Step 10 is independent and can slot in anywhere. All §6 working agreements still apply — one step per session, verify with the §7 engine + independent hand-checks, hard stop after each delivery.
 
 ## 6. Working agreements for every Claude session
 
