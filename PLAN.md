@@ -169,33 +169,48 @@ Delivered — what-if analysis, deliberately **isolated** from the live plan (in
 - The legacy attribute columns (`Deals!K–P`: transaction type, entity class, scope, industry, complexity, timeline) are **empty for every real deal** (verified July 21 — only the EXAMPLE row has values; they were always yellow to-fill placeholders). Her taxonomy can therefore *replace* K–P outright with zero data loss. Re-verify emptiness in-session before replacing (rule 5).
 - Point 4 is largely the existing Check-in machinery: every flag already recomputes when the weekly as-of date (`Settings!B19`) is bumped — one cell, once a week, deterministic (no volatile `TODAY()`, per §7). The work is richer flag semantics and surfacing, not a new engine.
 - Points 1 and 5 solve each other: one **Dashboard** tab as the shareable front door, back-end tabs **hidden, never deleted** (they keep computing; unhide any time).
-- The open problem is point 3: the fee→allocation mechanism needs a design decision plus a **rate card by level** that only the team can supply. It is scheduled design-first (Step 9).
+- Point 3's mechanism was the one open problem — **resolved at the July 21 review** (see Decisions below): fees per workstream drive the allocation, via a rate card and a level-split matrix the team supplies.
 
-**Decision checklist for the evening review** (settle these and Steps 8–11 are unblocked):
+**Decisions — recorded July 21 (user's answers to the 5-item checklist):**
 
-1. **Essential tabs** — proposal: visible = **Dashboard · Deals · Assignments** (Roster too?); everything else hidden but live.
-2. **Fee → allocation mechanism** — pick Step 9 option A/B/C, and supply the rate card by level (real numbers).
-3. **Timeline flag set** — proposal: `Tentative (no dates) · Not started · Kick-off ≤1 wk · In flight · Delivery ≤2 wks · Overdue · Delivered`; confirm thresholds, and confirm the weekly ritual stays "update `Settings!B19` every Monday" (deterministic) rather than a volatile `TODAY()`.
-4. **Estimation driver** — recommendation: the ticked workstreams *replace* the 8 effort archetypes as the estimate driver (per-workstream hours by level, summed), with the archetype column kept hidden as legacy; confirm, and start pricing the per-workstream numbers.
-5. **Live-copy status** — has anyone begun editing the SharePoint copy directly? If yes, that file must come back before Step 8 (it gets diffed exactly like the Step 2 review round). Note: once real data entry starts — which this feedback round will trigger — the generator hits its bootstrap-only cutover (§6 rule 2).
+1. **Essential tabs — DECIDED:** visible = **Dashboard · Deals · Assignments** as proposed; everything else hidden but live (including Roster — unhide anytime).
+2. **Fee → allocation — DECIDED (a fourth mechanism, superseding options A/B/C):** fees are entered **per workstream** on each engagement and **drive the hour allocation**. The team supplies two parameter sets: (a) the **rate card by level** ($/hr) and (b) an **illustrative % split by level per workstream** (how each workstream's fee divides across levels). Both are *awaited inputs* — yellow placeholders until provided.
+3. **Timeline flags — DECIDED:** flag set and thresholds exactly as proposed (`Tentative (no dates) · Not started · Kick-off ≤1 wk · In flight · Delivery ≤2 wks · Overdue · Delivered`); weekly deterministic bump of `Settings!B19`, no volatile `TODAY()`.
+4. **Estimation driver — DECIDED:** the workstreams **replace** the 8 effort archetypes; archetype machinery kept hidden as legacy (rule 5), no longer the driver.
+5. **Live copy — DECIDED:** no manual edits exist in the live copy; the repo snapshot is authoritative and Step 8 may regenerate safely. (Cutover watch continues: the first real data entry — fees, workstream ticks, dates — flips the generator to bootstrap-only per §6 rule 2.)
+
+**Computed fee→hours design** (the mechanics implied by decision 2 — confirm the four ★ interpretation points at Step 8 kickoff):
+
+```
+hours(level, workstream)   = fee(workstream) × split%(workstream, level) ÷ rate(level)
+deal hours by level        = Σ over that deal's priced workstreams
+deal hrs/wk by level       = deal hours by level ÷ duration in weeks
+per-assignment rate        = deal hrs/wk at their staffed-as level ÷ # active assignees at that level
+```
+
+- ★ **Fee granularity:** fees quoted per **workstream group** — TDD · Modeling · Structuring · Legal docs review (· Other) — one fee column each on Deals, total fee as a formula. (Per sub-item — e.g. each of the 9 modeling ticks — would be ~18 fee columns; assumed too granular for quoting.) The scoping ticks say *what's in scope*; the group fee says *how big*.
+- ★ **Duration:** hrs/wk uses the kick-off→delivery span (Step 10's dates); when dates are blank, a **default duration** knob in Settings (placeholder) so fee-driven hours still land somewhere visible rather than silently vanishing.
+- ★ **Person allocation:** a level's hrs/wk splits **evenly** across the active assignees at that level on the deal; an assignment Override still wins (same `Assignments!I` choke-point contract as today); a level with expected hours but nobody staffed surfaces on Check-in/Dashboard as MissingLevel **with its unallocated hrs/wk shown**.
+- ★ **Probability weighting** stays where it is (`Assignments!K`), applied after all of the above — unchanged choke point.
+
+**Awaited inputs before Step 9 can compute real numbers:** the rate card by level · the split-% matrix (workstream group × level, each row summing to 100%) · then per-deal fees as the team enters them. Steps 8–11 are otherwise unblocked; **dev work starts only on the user's explicit "go"**.
 
 ### Step 8 — Workstream scoping model · **Opus** · Large
 
 Point 2. First task: the **live-copy check** (diff the team's current file against the repo snapshot, Step-2-style; encode or cut over per §6 rule 2 if manual edits exist). Then:
 
 - Replace `Deals!K–P` (after re-verifying they're empty) with the scoping block, preserving her wording exactly: TDD deal type (dropdown) · Domestic only? (Y/N) · TDD scope (dropdown) · Other TDD scoping (dropdown incl. N/A) · a modeling block (one narrow column per item — Corporate tax modeling as a 3-way dropdown `Basic (no roll up) · Building roll up · blank=N/A`; the other eight as `Y / blank=N/A`) · Structuring (3 × Y/blank) · Legal docs review (Y/blank). Wide is fine — Justine owns the back-end matrix (point 5).
-- Rework **Templates** into per-workstream effort rows (hrs/wk by level per workstream item, plus a TDD-scope multiplier row set) — all placeholders, yellow, Review item. A deal's suggested rate = SUM over its ticked workstreams, flowing into `Assignments!I` through the **same choke point** the archetype rate uses today; archetype column kept as hidden legacy fallback.
-- Acceptance: taxonomy wording matches the email exactly; two synthetic deals hand-checked (estimate = sum of ticked workstream rates × scope multiplier); deals with nothing ticked fall back unchanged (live numbers identical — the Steps 1–7 invariant); 0 errors; §4 updated in the same commit.
+- Rework **Templates** into the **allocation parameter tab** for the decided fee→hours mechanism: the rate card by level ($/hr) · the split-% matrix (workstream group × level, each row summing to 100%, with a checksum cell) · a default duration per workstream group (used when a deal has no dates). All yellow placeholders + a Review item until the team's real numbers arrive; the archetype table stays on the tab but is marked legacy and hidden with it later (rule 5).
+- Acceptance: taxonomy wording matches the email exactly; the split-matrix checksums evaluate; **with no fees entered anywhere, every live number is unchanged** (the Steps 1–7 invariant — the hours math itself lands in Step 9); 0 errors; §4 updated in the same commit.
 
-### Step 9 — Fees → allocation · design at the evening session, then **Opus** · Medium
+### Step 9 — Fees → hour allocation · **Opus** · Medium/Large (mechanism decided July 21; needs the rate card + split matrix)
 
-Point 3. Mechanism options to brainstorm (pick one tonight):
+Point 3, per the recorded decision and the computed design above:
 
-- **A — Fee-driven hours:** fee ÷ level-blended rate card → target hours by level → suggested staffing; the workstream estimate becomes the cross-check.
-- **B — Fee as the check (recommended):** the Step 8 workstream estimate stays the hours driver; new columns compute implied fees (estimated hours × rate card) vs the quoted fee → an implied-realization % that flags deals scoped rich or poor. Least new machinery, most honest while template numbers are placeholders.
-- **C — Fee bands:** map fee ranges to effort tiers. Cheapest, crudest.
-
-Build after the decision: `Deals!Fee quote` input column (+ chosen mechanism), rate card by level in Settings (real numbers, else yellow placeholders + Review item). Acceptance: hand-checked math on 3 deals; deals without a fee entered are completely unaffected.
+- `Deals` gains **fee inputs per workstream group** (TDD · Modeling · Structuring · Legal docs review · Other) + a total-fee formula column.
+- Engine: deal hours by level = Σ fee × split% ÷ rate; converted to hrs/wk over the deal's kick-off→delivery span (default duration when dates are blank); **per-assignment rate = level hrs/wk ÷ active assignees at that level**, flowing through the same `Assignments!I` choke point (Override still wins; nothing else about K/weighting/phasing moves).
+- Expected-but-unstaffed levels are flagged with their **unallocated hrs/wk** (Check-in + Dashboard).
+- Acceptance: hand-check 2 synthetic deals end-to-end — fees → level hours → per-person rates — including one deal with two people at the same level (even split) and one with an unstaffed level (unallocated hours flagged); deals without fees are completely unaffected (invariant); 0 errors.
 
 ### Step 10 — Timeline flags · **Sonnet** · Small
 
@@ -203,7 +218,7 @@ Point 4. Rename `Deals!I/J` headers to **Kick-off date / Delivery date** (cells 
 
 ### Step 11 — Dashboard + tab diet · **Opus** · Medium
 
-Points 1 + 5. A new **Dashboard** tab in position 1 — the D/MD share view: headline tiles (team utilization next 4 weeks, # over-allocated, # deals needing attention, upcoming deliveries), a compact capacity heat strip, and the timeline-flag list; print/PDF-ready, fully protected, zero inputs. Then the tab diet per checklist item 1: hide (never delete) the non-essential tabs via `sheet_state="hidden"` — they keep computing; Guide gains an "unhiding tabs" note; Check-in's content is absorbed into the Dashboard and the tab hidden. Acceptance: the file opens on Dashboard; hidden tabs still drive every number (0 errors, invariants hold); a PDF of the Dashboard is legible standalone; §4 gains a visibility column.
+Points 1 + 5. A new **Dashboard** tab in position 1 — the D/MD share view: headline tiles (team utilization next 4 weeks, # over-allocated, # deals needing attention, upcoming deliveries), a compact capacity heat strip, and the timeline-flag list; print/PDF-ready, fully protected, zero inputs. Then the tab diet **per the recorded decision**: visible = **Dashboard · Deals · Assignments**; the other ten (Guide, Capacity, Check-in, Scenario, Roster, Templates, Actuals, Variance, Settings, Review) hidden via `sheet_state="hidden"` — never deleted, still computing; Guide gains an "unhiding tabs" note; Check-in's content is absorbed into the Dashboard. Acceptance: the file opens on Dashboard; hidden tabs still drive every number (0 errors, invariants hold); a PDF of the Dashboard is legible standalone; §4 gains a visibility column.
 
 **Order:** 8 → 9 → 10 → 11 (fees lean on the workstream mix; the Dashboard shows everything). Step 10 is independent and can slot in anywhere. All §6 working agreements still apply — one step per session, verify with the §7 engine + independent hand-checks, hard stop after each delivery.
 
