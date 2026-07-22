@@ -174,6 +174,18 @@ DUR_LAST = DUR_FIRST + len(WS_GROUPS) - 1         # 61 BI
 DW_FIRST = DUR_LAST + 1                           # 62 BJ..BP: fee hrs/wk by level (calc)
 DW_LAST = DW_FIRST + len(RATE_CARD) - 1           # 68 BP
 DEALS_LAST_COL = DW_LAST                          # 68 - last Deals formula column
+
+# ---- Step 10: timeline status (Point 4). One calc column appended after BP.
+# Flag set + wording is decided verbatim (PLAN.md 5A decision 3), not a
+# placeholder: Tentative (no dates) -> Not started -> Kick-off <=1 wk ->
+# In flight -> Delivery <=2 wks -> Overdue -> Delivered. "<=1 wk"/"<=2 wks" are
+# literal 7-day/14-day thresholds off Settings!B19 (the existing weekly as-of
+# date, no volatile TODAY() per S7). Overdue vs Delivered both fire once the
+# as-of date passes the delivery date; Overdue is specifically lifecycle=Active
+# (still being worked past its date), Delivered is everything else (properly
+# closed out, on hold, dead, etc.) - per the Step 10 spec text.
+TIMELINE_COL = DEALS_LAST_COL + 1                 # 69 BQ: Timeline status (calc)
+DEALS_LAST_COL = TIMELINE_COL                     # 69 - last Deals formula column
 # New Assignments helper columns appended after AN (40):
 A_FEETOT = 41                                     # AO: this deal's total fee (calc)
 A_FEEPP = 42                                      # AP: fee hrs/wk per person (calc)
@@ -924,7 +936,7 @@ def build(deals, assigns, review, out_path):
     # deleted (rule 5).
     hdr = ["Project ID", "Client (as filed)", "Primary client",
            "End client / target", "Referral?", "Lifecycle", "Phase",
-           "Probability", "Expected start", "Expected end",
+           "Probability", "Kick-off date", "Delivery date",
            "(retired: workstream scoping ->)", "(retired)", "(retired)",
            "(retired)", "(retired)", "(retired)", "# staffed", "Planned hrs/wk",
            "Source status (Jul 9)", "Notes", "Effort archetype (legacy)",
@@ -939,11 +951,13 @@ def build(deals, assigns, review, out_path):
     hdr += ["Fee $ total (calc)"]                        # BD
     hdr += [f"Dur wk - {g} (calc)" for g in WS_GROUPS]   # BE..BI
     hdr += list(RATE_CARD.keys())                        # BJ..BP (exact level names)
+    hdr += ["Timeline status (calc)"]                     # BQ (Step 10)
     widths = [22, 38, 26, 22, 8, 14, 13, 10, 11, 11, 13, 13, 14, 14, 16, 11, 8,
               10, 16, 30, 20, 10, 10, 10, 14, 11, 14, 12, 12, 11, 12, 12, 14]
     widths += [16] * len(WS_TAXONOMY)
     widths += [13] * len(WS_GROUPS) + [12] + [10] * len(WS_GROUPS) \
         + [11] * len(RATE_CARD)
+    widths += [16]                                        # Timeline status
     style_header(wd, 1, hdr, widths)
     for col in range(11, 17):                            # hide retired K-P
         wd.column_dimensions[get_column_letter(col)].hidden = True
@@ -1061,6 +1075,19 @@ def build(deals, assigns, review, out_path):
             wcell(wd, rr, DW_FIRST + j,
                   f'=IF(OR($A{rr}="",${bd}{rr}=0),0,({terms})/{rate})',
                   F_LINK, fmt="0.0")
+        # --- Step 10 timeline status (calc; leave alone). 7 mutually exclusive
+        # branches off Settings!B19 (the weekly as-of date) vs Kick-off/Delivery:
+        # no dates -> Tentative; as-of past Delivery -> Overdue (lifecycle still
+        # Active) or Delivered (anything else); as-of before Kick-off -> Not
+        # started (>7 days out) or Kick-off <=1 wk (<=7 days out); as-of within
+        # [Kick-off, Delivery] -> Delivery <=2 wks (<=14 days to go) or In flight.
+        wcell(wd, rr, TIMELINE_COL,
+              f'=IF($A{rr}="","",IF(OR($I{rr}="",$J{rr}=""),"Tentative",'
+              f'IF(Settings!$B$19>$J{rr},IF($F{rr}="Active","Overdue","Delivered"),'
+              f'IF(Settings!$B$19<$I{rr},'
+              f'IF($I{rr}-Settings!$B$19>7,"Not started","Kick-off ≤1 wk"),'
+              f'IF($J{rr}-Settings!$B$19<=14,"Delivery ≤2 wks","In flight")))))',
+              F_BODY)
         for ccol in range(1, DEALS_LAST_COL + 1):
             wd.cell(row=rr, column=ccol).border = THIN_BTM
     wd.freeze_panes = "B2"
@@ -1419,7 +1446,10 @@ def build(deals, assigns, review, out_path):
           "different): 'Missing level' = the deal has an Effort archetype "
           "that expects hours from a level, but nobody at that level is "
           "actively staffed. 'Stale' = weeks since Added-on >= the Settings "
-          "threshold (currently editable at Settings!B20).", F_NOTE)
+          "threshold (currently editable at Settings!B20). 'Timeline status' "
+          "(section 2) = Tentative (no dates) / Not started / Kick-off <=1 wk / "
+          "In flight / Delivery <=2 wks / Overdue / Delivered, off Settings!B19.",
+          F_NOTE)
 
     # --- Section 1: capacity, next 4 weeks (mirrors Roster/Capacity row-for-row)
     wcell(chk, 5, 1, "1) Capacity - next 4 weeks", F_BOLD, FILL_AMBER)
@@ -1460,8 +1490,8 @@ def build(deals, assigns, review, out_path):
     style_header(chk, d5 + 1,
                  ["Project ID", "Client", "Lifecycle", "Probability",
                   "# staffed", "Dates set?", "Added on", "Weeks since added",
-                  "Flag"],
-                 [22, 26, 14, 10, 8, 9, 11, 11, 46])
+                  "Flag", "Timeline status"],
+                 [22, 26, 14, 10, 8, 9, 11, 11, 46, 16])
     d0 = d5 + 2
     d9 = d0 + (LAST_D - 2)
     for i, r in enumerate(range(d0, d9 + 1)):
@@ -1500,10 +1530,15 @@ def build(deals, assigns, review, out_path):
               f'IF($F{r}="No"," NoDates","")&'
               f'IF(AND(ISNUMBER($H{r}),$H{r}>=Settings!$B$20)," Stale","")))',
               F_BODY, align=Alignment(wrap_text=True, vertical="top"))
-        for ccol in range(1, 10):
+        wcell(chk, r, 10, f'=IF($A{r}="","",Deals!${get_column_letter(TIMELINE_COL)}{rr})',
+              F_LINK)
+        for ccol in range(1, 11):
             chk.cell(row=r, column=ccol).border = THIN_BTM
     chk.conditional_formatting.add(
-        f"A{d0}:I{d9}",
+        f"A{d0}:J{d9}",
+        FormulaRule(formula=[f'$J{d0}="Overdue"'], fill=FILL_RED, stopIfTrue=True))
+    chk.conditional_formatting.add(
+        f"A{d0}:J{d9}",
         FormulaRule(formula=[f'AND($I{d0}<>"",$A{d0}<>"")'], fill=FILL_AMBER))
     chk.column_dimensions["A"].width = 22
     chk.column_dimensions["I"].width = 46
@@ -1511,7 +1546,7 @@ def build(deals, assigns, review, out_path):
     chk.row_dimensions[2].height = 28
     chk.row_dimensions[3].height = 40
     # print setup: the check-in is meant to be printed/shared each week
-    chk.print_area = f"A1:I{d9}"
+    chk.print_area = f"A1:J{d9}"
     chk.page_setup.orientation = "landscape"
     chk.page_setup.fitToWidth = 1
     chk.page_setup.fitToHeight = 0
@@ -1585,7 +1620,7 @@ def build(deals, assigns, review, out_path):
         ("Deal dates blank", "", "All deals",
          "The July 9 file has no dates, so every deal counts in every week of "
          "the Capacity view",
-         "Fill Expected start/end (yellow cells) to time-phase the load"),
+         "Fill Kick-off/Delivery date (yellow cells) to time-phase the load"),
         ("Weekly capacity is a placeholder", "", "All roster",
          "Everyone is set to 40 h/wk (Roster column D)",
          "Set each person's real weekly capacity"),
@@ -1619,9 +1654,17 @@ def build(deals, assigns, review, out_path):
          "from a level, but nobody at that level is actively staffed. 'Stale' "
          "means: weeks since 'Added on' >= Settings!B20 (4, placeholder). "
          "'Added on' is 2026-07-09 for every migrated deal (build date, not "
-         "actual deal start), so nothing shows Stale yet.",
+         "actual deal start), so nothing shows Stale yet. Step 10's 'Timeline "
+         "status' (Deals BQ, mirrored on Check-in) is Tentative (a date is "
+         "blank) / Not started (>7 days to Kick-off) / Kick-off <=1 wk / In "
+         "flight / Delivery <=2 wks / Overdue (past Delivery date, lifecycle "
+         "still Active) / Delivered (past Delivery date, lifecycle anything "
+         "else - closed, on hold, dead, etc.), off Settings!B19. Every real "
+         "deal currently has a blank Kick-off or Delivery date, so all show "
+         "Tentative until dates are filled.",
          "Confirm these definitions match what the team means; tune the "
-         "stale-weeks threshold (Settings!B20)"),
+         "stale-weeks threshold (Settings!B20); fill Kick-off/Delivery dates "
+         "(Deals I/J) to move deals off Tentative"),
         ("Old 'Filtered Status' tab", "", "-",
          "It was a manual pivot of the per-person survey; superseded by the "
          "Assignments tab filters", "Nothing to do"),
@@ -1703,20 +1746,23 @@ def build(deals, assigns, review, out_path):
         ("  Check-in - the weekly 15-20 min meeting agenda, generated "
          "automatically: who's over/under-allocated in the next 4 weeks, and "
          "which Active/Proposal deals need attention (unstaffed, missing a "
-         "staffed level, still at the default probability, no dates, or "
-         "stale). Nothing to edit here - update Settings!B19 to today first.",
-         F_BODY),
+         "staffed level, still at the default probability, no dates, stale, or "
+         "Timeline status = Overdue, highlighted red). Nothing to edit here - "
+         "update Settings!B19 to today first.", F_BODY),
         ("  Scenario - what-if analysis. Fill the violet SCENARIO columns on "
          "Deals (probability / start / end) - e.g. bump three proposals to "
          "100% - and this tab shows who would blow up, Live vs Scenario, "
          "without touching the real plan. Blank overrides = identical to Live.",
          F_BODY),
-        ("  Deals - one row per engagement: lifecycle, probability, dates. The "
-         "yellow WORKSTREAM SCOPING columns are Justine's taxonomy - tick what's "
-         "in scope. The yellow FEE $ columns (one per group: TDD, Modeling, "
-         "Structuring, Legal docs, Other) drive the hours - enter a fee and it "
-         "flows to hours-by-level through Templates. Violet columns are scenario "
-         "overrides. (Old attribute columns K-P are retired and hidden.)", F_BODY),
+        ("  Deals - one row per engagement: lifecycle, probability, Kick-off "
+         "date / Delivery date (tentative - the flag adjusts weekly as they "
+         "firm up). The yellow WORKSTREAM SCOPING columns are Justine's "
+         "taxonomy - tick what's in scope. The yellow FEE $ columns (one per "
+         "group: TDD, Modeling, Structuring, Legal docs, Other) drive the "
+         "hours - enter a fee and it flows to hours-by-level through Templates. "
+         "'Timeline status' (calc, far right) reads Kick-off/Delivery date + "
+         "Settings!B19. Violet columns are scenario overrides. (Old attribute "
+         "columns K-P are retired and hidden.)", F_BODY),
         ("  Assignments - one row per person on a deal. 'Active?' controls "
          "whether it counts. Hours come from the deal's fees (split by level), or "
          "its archetype, or the level default - unless you set an Override "
@@ -1764,7 +1810,7 @@ def build(deals, assigns, review, out_path):
          "the level default); type an Override for this deal if needed.", F_BODY),
         ("  Price a deal (this drives hours): on Deals, enter the FEE $ for each "
          "workstream group in scope. Hours by level = fee x split%(Templates) / "
-         "rate(Templates), spread evenly across the deal's Expected start/end (or "
+         "rate(Templates), spread evenly across the deal's Kick-off/Delivery date (or "
          "the group's default duration if dates are blank), then divided among "
          "the people staffed at each level. Add dates so the hours land in the "
          "right weeks - and make sure someone is staffed at each level the split "
