@@ -558,6 +558,7 @@ def wcell(ws, row, col, value, font=F_BODY, fill=None, fmt=None, align=None):
 def build(deals, assigns, review, out_path):
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
+    dsh = wb.create_sheet("Dashboard")               # Step 11 - moved to front + made active at the end
     guide = wb.create_sheet("Guide")
     cap = wb.create_sheet("Capacity")
     chk = wb.create_sheet("Check-in")
@@ -570,10 +571,11 @@ def build(deals, assigns, review, out_path):
     var = wb.create_sheet("Variance")
     st = wb.create_sheet("Settings")
     rv = wb.create_sheet("Review")
-    for sheet, color in [(guide, "808080"), (cap, "2E7D32"), (chk, "C00000"),
-                         (scn, "7030A0"), (wd, "1F4E79"), (wa, "1F4E79"),
-                         (wr, "1F4E79"), (tpl, "7030A0"), (act, "C55A11"),
-                         (var, "C55A11"), (st, "BF8F00"), (rv, "808080")]:
+    for sheet, color in [(dsh, "0F243E"), (guide, "808080"), (cap, "2E7D32"),
+                         (chk, "C00000"), (scn, "7030A0"), (wd, "1F4E79"),
+                         (wa, "1F4E79"), (wr, "1F4E79"), (tpl, "7030A0"),
+                         (act, "C55A11"), (var, "C55A11"), (st, "BF8F00"),
+                         (rv, "808080")]:
         sheet.sheet_properties.tabColor = color
 
     deal_rows = sorted(deals.values(), key=lambda d: (LIFE_RANK[d["life"]],
@@ -1445,7 +1447,9 @@ def build(deals, assigns, review, out_path):
           "Definitions (adjust in Settings if the team means something "
           "different): 'Missing level' = the deal has an Effort archetype "
           "that expects hours from a level, but nobody at that level is "
-          "actively staffed. 'Stale' = weeks since Added-on >= the Settings "
+          "actively staffed. 'FeeLevelGap' = a workstream fee funds hours at a "
+          "level but nobody active is staffed there (silent until fees are "
+          "entered). 'Stale' = weeks since Added-on >= the Settings "
           "threshold (currently editable at Settings!B20). 'Timeline status' "
           "(section 2) = Tentative (no dates) / Not started / Kick-off <=1 wk / "
           "In flight / Delivery <=2 wks / Overdue / Delivered, off Settings!B19.",
@@ -1521,10 +1525,24 @@ def build(deals, assigns, review, out_path):
                 f'Assignments!$F$2:$F${LAST_A},"{lvl_name}",'
                 f'Assignments!$G$2:$G${LAST_A},"Active")=0)')
         missing = f'IF(Deals!$U{rr}="",FALSE,OR({",".join(missing_clauses)}))'
+        # fee-funded-level gap (Step 11, the deferred Step 9 flag): a workstream
+        # fee funds hours at a level (Deals BJ..BP > 0) but nobody active is
+        # staffed there. Gated on the deal carrying a fee (Deals BD > 0), so it is
+        # silent until fees are entered.
+        fee_clauses = []
+        for j, lvl_name in enumerate(LEVELS):
+            fee_clauses.append(
+                f'AND(Deals!${get_column_letter(DW_FIRST + j)}{rr}>0,'
+                f'COUNTIFS(Assignments!$C$2:$C${LAST_A},$A{r},'
+                f'Assignments!$F$2:$F${LAST_A},"{lvl_name}",'
+                f'Assignments!$G$2:$G${LAST_A},"Active")=0)')
+        fee_gap = (f'IF(Deals!${get_column_letter(FEE_TOTAL)}{rr}=0,FALSE,'
+                   f'OR({",".join(fee_clauses)}))')
         wcell(chk, r, 9,
               f'=IF(OR($A{r}="",NOT({live})),"",TRIM('
               f'IF($E{r}=0," Unstaffed","")&'
               f'IF({missing}," MissingLevel","")&'
+              f'IF({fee_gap}," FeeLevelGap","")&'
               f'IF(AND($C{r}="Proposal",Deals!$H{rr}={PROB_PROPOSAL})," '
               f'DefaultProbability","")&'
               f'IF($F{r}="No"," NoDates","")&'
@@ -1532,6 +1550,15 @@ def build(deals, assigns, review, out_path):
               F_BODY, align=Alignment(wrap_text=True, vertical="top"))
         wcell(chk, r, 10, f'=IF($A{r}="","",Deals!${get_column_letter(TIMELINE_COL)}{rr})',
               F_LINK)
+        # Step 11 Dashboard feeders: attn = live deal with a SHARP flag (unstaffed,
+        # missing/fee-gap level, or overdue); rank = running 1..N over attn rows so
+        # the Dashboard can INDEX/MATCH a compact list without FILTER.
+        wcell(chk, r, 11,
+              f'=IF(AND($A{r}<>"",{live},OR($E{r}=0,'
+              f'ISNUMBER(SEARCH("MissingLevel",$I{r})),'
+              f'ISNUMBER(SEARCH("FeeLevelGap",$I{r})),$J{r}="Overdue")),1,0)',
+              F_BODY, fmt="0")
+        wcell(chk, r, 12, f'=IF($K{r}=1,SUM($K${d0}:$K{r}),"")', F_BODY, fmt="0")
         for ccol in range(1, 11):
             chk.cell(row=r, column=ccol).border = THIN_BTM
     chk.conditional_formatting.add(
@@ -1542,6 +1569,8 @@ def build(deals, assigns, review, out_path):
         FormulaRule(formula=[f'AND($I{d0}<>"",$A{d0}<>"")'], fill=FILL_AMBER))
     chk.column_dimensions["A"].width = 22
     chk.column_dimensions["I"].width = 46
+    chk.column_dimensions["K"].hidden = True          # Dashboard feeders (attn/rank)
+    chk.column_dimensions["L"].hidden = True
     chk.freeze_panes = "A7"
     chk.row_dimensions[2].height = 28
     chk.row_dimensions[3].height = 40
@@ -1614,6 +1643,16 @@ def build(deals, assigns, review, out_path):
         "Fee-allocation parameters awaited",
     }   # "Effort templates are placeholders" -> now legacy, routed to audit
     blanket = [
+        ("Dashboard is the shared front page", "", "Dashboard tab (Step 11)",
+         "The Dashboard is the D/MD share view (tiles + capacity heat strip + "
+         "deals-needing-attention list); it opens first and reads the ten now-"
+         "hidden tabs (which still compute). Team utilization currently reads "
+         "very high because every deal has blank dates and counts in every week "
+         "- it drops to reality as Kick-off/Delivery dates and fees are entered. "
+         "Visible tabs: Dashboard, Deals, Assignments; the rest are hidden "
+         "(right-click a tab > Unhide), never deleted.",
+         "Confirm the KPI tiles + attention-flag set match what the D/MDs want "
+         "to see; no action needed on the hidden tabs"),
         ("Proposal probabilities defaulted", "", "All 'Proposal' deals",
          "Probability prefilled at 50% (WIP deals at 100%)",
          "Set real probabilities in the yellow Probability cells (Deals tab)"),
@@ -1740,8 +1779,19 @@ def build(deals, assigns, review, out_path):
          "This workbook is the bridge tracker: one source of truth for deals, "
          "staffing and weekly capacity.", F_NOTE),
         ("", F_BODY),
+        ("ONLY THREE TABS ARE VISIBLE: Dashboard (the share view), Deals and "
+         "Assignments (where you enter data). The other ten tabs are HIDDEN, not "
+         "deleted - they keep computing behind the scenes. To open one: right-"
+         "click any tab at the bottom > Unhide > pick the tab. To hide it again: "
+         "right-click the tab > Hide.", F_BODY),
+        ("", F_BODY),
         ("TABS", F_BOLD),
-        ("  Capacity - the dashboard: planned hours per person per week. Red = "
+        ("  Dashboard - the shareable front page for the D/MD group (visible). "
+         "Headline tiles (team utilization, over-allocated people, deals needing "
+         "attention, upcoming deliveries, overdue), a next-8-weeks capacity heat "
+         "strip, and the deals-needing-attention list. Zero inputs; it reads the "
+         "hidden tabs. Print/PDF-ready (landscape).", F_BODY),
+        ("  Capacity - planned hours per person per week (26 weeks). Red = "
          "over capacity, amber = above 85%.", F_BODY),
         ("  Check-in - the weekly 15-20 min meeting agenda, generated "
          "automatically: who's over/under-allocated in the next 4 weeks, and "
@@ -1865,6 +1915,150 @@ def build(deals, assigns, review, out_path):
         wcell(guide, i, 2, txt, font,
               align=Alignment(wrap_text=True, vertical="top"))
     guide.sheet_view.showGridLines = False
+
+    # ---------------- Dashboard (Step 11: shareable D/MD front page). Zero inputs;
+    # pulls from the now-hidden Capacity / Check-in / Deals compute layers (hidden
+    # sheets still recalc, so every number stays live). Made the first sheet +
+    # active at the end; all tabs except Deals/Assignments hidden below it.
+    F_KPI = Font(name=ARIAL, size=20, bold=True, color="1F3864")
+    F_KPILBL = Font(name=ARIAL, size=9, bold=True, color="FFFFFF")
+    F_DTITLE = Font(name=ARIAL, size=16, bold=True, color="0F243E")
+    CTR = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    n_roster = len(roster_flat)
+    dsh.sheet_view.showGridLines = False
+    dsh.column_dimensions["A"].width = 24
+    dsh.column_dimensions["B"].width = 10
+    for cc in range(3, 12):                               # C..K
+        dsh.column_dimensions[get_column_letter(cc)].width = 9
+    wcell(dsh, 1, 1, "US M&A Tax - Team Dashboard", F_DTITLE)
+    dsh.merge_cells("A1:K1")
+    wcell(dsh, 2, 1,
+          '="As of "&TEXT(Settings!$B$19,"yyyy-mm-dd")&"   |   capacity window '
+          'from "&TEXT(Settings!$B$3,"yyyy-mm-dd")&"   |   probability weighting: '
+          '"&Settings!$B$4&"   |   share view: detail tabs are hidden below '
+          '(right-click any tab > Unhide)"', F_NOTE)
+    dsh.merge_cells("A2:K2")
+
+    # --- KPI tiles: label row 4, value row 5, each merged across two columns
+    tiles = [
+        ("Team utilization (next 4 wks)",
+         f'=IFERROR(SUM(Capacity!$C${trow}:$F${trow})/'
+         f'SUM(Capacity!$C${trow + 1}:$F${trow + 1}),"")', "0%"),
+        ("Over-allocated (next 4 wks)",
+         f"=COUNTIF('Check-in'!$F${c0}:$F${c9},\"OVER-ALLOCATED\")", "0"),
+        ("Deals needing attention",
+         f"=SUM('Check-in'!$K${d0}:$K${d9})", "0"),
+        ("Deliveries ≤2 wks",
+         f'=COUNTIF(Deals!$BQ$2:$BQ${LAST_D},"Delivery ≤2 wks")', "0"),
+        ("Overdue",
+         f'=COUNTIF(Deals!$BQ$2:$BQ${LAST_D},"Overdue")', "0"),
+    ]
+    for k, (label, formula, fmt) in enumerate(tiles):
+        c1 = 2 + 2 * k                                    # B, D, F, H, J
+        L1, L2 = get_column_letter(c1), get_column_letter(c1 + 1)
+        for cc in (c1, c1 + 1):
+            dsh.cell(row=4, column=cc).fill = FILL_HDR
+            dsh.cell(row=5, column=cc).fill = FILL_GREY
+        dsh.merge_cells(f"{L1}4:{L2}4")
+        dsh.merge_cells(f"{L1}5:{L2}5")
+        wcell(dsh, 4, c1, label, F_KPILBL, FILL_HDR, align=CTR)
+        wcell(dsh, 5, c1, formula, F_KPI, FILL_GREY, fmt, align=CTR)
+    dsh.row_dimensions[4].height = 26
+    dsh.row_dimensions[5].height = 34
+
+    # --- Capacity heat strip: per-person, next 8 weeks (mirrors Capacity)
+    hs = 7
+    wcell(dsh, hs, 1, "Capacity - next 8 weeks (planned hrs/wk; red = over "
+          "capacity, amber > 85%)", F_BOLD, FILL_AMBER)
+    dsh.merge_cells(f"A{hs}:K{hs}")
+    wcell(dsh, hs + 1, 1, "Person", F_HDR, FILL_HDR)
+    wcell(dsh, hs + 1, 2, "Cap", F_HDR, FILL_HDR, align=CTR)
+    for w in range(8):
+        L = get_column_letter(3 + w)
+        wcell(dsh, hs + 1, 3 + w, f"=Capacity!{L}$4", F_HDR, FILL_HDR, "dd-mmm", CTR)
+    dsh.row_dimensions[hs + 1].height = 22
+    h0 = hs + 2
+    for i in range(n_roster):
+        r = h0 + i
+        src, caprow = 2 + i, first_p + i
+        wcell(dsh, r, 1, f'=IF(Roster!$A{src}="","",Roster!$A{src})', F_LINK)
+        wcell(dsh, r, 2, f'=IF($A{r}="","",Roster!$D{src})', F_LINK, fmt="0",
+              align=Alignment(horizontal="center"))
+        for w in range(8):
+            L = get_column_letter(3 + w)
+            wcell(dsh, r, 3 + w, f'=IF($A{r}="","",Capacity!{L}{caprow})',
+                  F_BODY, fmt="0.0;-0.0;", align=Alignment(horizontal="center"))
+        for cc in range(1, 11):
+            dsh.cell(row=r, column=cc).border = THIN_BTM
+    h9 = h0 + n_roster - 1
+    hgrid = f"C{h0}:J{h9}"
+    dsh.conditional_formatting.add(hgrid, FormulaRule(
+        formula=[f"AND(ISNUMBER(C{h0}),ISNUMBER($B{h0}),C{h0}>$B{h0})"],
+        fill=FILL_RED, stopIfTrue=True))
+    dsh.conditional_formatting.add(hgrid, FormulaRule(
+        formula=[f"AND(ISNUMBER(C{h0}),ISNUMBER($B{h0}),C{h0}>0.85*$B{h0})"],
+        fill=FILL_AMBER, stopIfTrue=True))
+
+    # --- Attention list: compact, rank-extracted from Check-in (no FILTER). Wide
+    # fields (client/timeline/flags) span merged narrow columns.
+    ATTN_SHOW = 30
+    ah = h9 + 2
+    wcell(dsh, ah, 1, "Deals needing attention (unstaffed / level gap / overdue)",
+          F_BOLD, FILL_AMBER)
+    dsh.merge_cells(f"A{ah}:K{ah}")
+    hr = ah + 1
+    for cc in range(1, 12):
+        dsh.cell(row=hr, column=cc).fill = FILL_HDR
+    wcell(dsh, hr, 1, "Project ID", F_HDR, FILL_HDR)
+    wcell(dsh, hr, 2, "Client", F_HDR, FILL_HDR)
+    wcell(dsh, hr, 5, "Lifecycle", F_HDR, FILL_HDR)
+    wcell(dsh, hr, 6, "Timeline status", F_HDR, FILL_HDR)
+    wcell(dsh, hr, 8, "Flags", F_HDR, FILL_HDR)
+    for a, b in [("B", "D"), ("F", "G"), ("H", "K")]:
+        dsh.merge_cells(f"{a}{hr}:{b}{hr}")
+    dsh.row_dimensions[hr].height = 20
+    cin = f"'Check-in'"
+    for n in range(1, ATTN_SHOW + 1):
+        r = hr + n
+        m = f"MATCH({n},{cin}!$L${d0}:$L${d9},0)"
+        wcell(dsh, r, 1, f'=IFERROR(INDEX({cin}!$A${d0}:$A${d9},{m}),"")', F_LINK)
+        wcell(dsh, r, 2, f'=IFERROR(INDEX({cin}!$B${d0}:$B${d9},{m}),"")', F_LINK)
+        wcell(dsh, r, 5, f'=IFERROR(INDEX({cin}!$C${d0}:$C${d9},{m}),"")', F_LINK)
+        wcell(dsh, r, 6, f'=IFERROR(INDEX({cin}!$J${d0}:$J${d9},{m}),"")', F_LINK)
+        wcell(dsh, r, 8, f'=IFERROR(INDEX({cin}!$I${d0}:$I${d9},{m}),"")', F_LINK)
+        for a, b in [("B", "D"), ("F", "G"), ("H", "K")]:
+            dsh.merge_cells(f"{a}{r}:{b}{r}")
+        for cc in range(1, 12):
+            dsh.cell(row=r, column=cc).border = THIN_BTM
+    alast = hr + ATTN_SHOW
+    dsh.conditional_formatting.add(
+        f"A{hr + 1}:K{alast}",
+        FormulaRule(formula=[f'$F{hr + 1}="Overdue"'], fill=FILL_RED,
+                    stopIfTrue=True))
+    dsh.conditional_formatting.add(
+        f"A{hr + 1}:K{alast}",
+        FormulaRule(formula=[f'$A{hr + 1}<>""'], fill=FILL_AMBER))
+    note_r = alast + 1
+    wcell(dsh, note_r, 1,
+          f'=IF(SUM({cin}!$K${d0}:$K${d9})=0,"No deals currently flagged.",'
+          f'IF(SUM({cin}!$K${d0}:$K${d9})>{ATTN_SHOW},"+ "&'
+          f'(SUM({cin}!$K${d0}:$K${d9})-{ATTN_SHOW})&" more flagged - open the '
+          f'hidden Check-in tab for the full list.",""))', F_NOTE)
+    dsh.merge_cells(f"A{note_r}:K{note_r}")
+    dsh.freeze_panes = "A3"
+    dsh.print_area = f"A1:K{note_r}"
+    dsh.page_setup.orientation = "landscape"
+    dsh.page_setup.fitToWidth = 1
+    dsh.page_setup.fitToHeight = 0
+    dsh.sheet_properties.pageSetUpPr = openpyxl.worksheet.properties.PageSetupProperties(
+        fitToPage=True)
+
+    # Step 11 tab diet: Dashboard first + active; every tab except Deals /
+    # Assignments hidden (never deleted - they keep computing; unhide any time).
+    wb.active = wb.sheetnames.index("Dashboard")
+    for s in wb.worksheets:
+        if s.title not in ("Dashboard", "Deals", "Assignments"):
+            s.sheet_state = "hidden"
 
     # default font sweep for anything not explicitly styled
     for sheet in wb.worksheets:
