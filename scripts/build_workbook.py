@@ -144,18 +144,30 @@ WS_FIRST, WS_LAST = 34, 50                                # AH .. AX
 # Fee -> hours parameters (Step 8 structure; Step 9 wires them). Fees are quoted
 # per workstream GROUP; the split matrix is group x level (each row sums to 100%).
 WS_GROUPS = ["TDD", "Modeling", "Structuring", "Legal docs review", "Other"]
-# PLACEHOLDER rate card ($/hr by level) and split % - illustrative, to be replaced
-# by the team's real rate card + split matrix. Split rows each total 100%.
-RATE_CARD = OrderedDict([("Partner", 900), ("MD", 700), ("Director", 550),
-                         ("VP", 400), ("Senior Associate", 300),
-                         ("Renewable Specialist", 250), ("Associate", 200)])
-SPLIT_PLACEHOLDER = {   # group -> [Partner, MD, Director, VP, SA, Renewable, Assoc] %, sum 100
-    "TDD": [5, 10, 15, 20, 30, 0, 20],
-    "Modeling": [3, 7, 15, 25, 30, 0, 20],
-    "Structuring": [10, 20, 30, 20, 15, 0, 5],
-    "Legal docs review": [5, 15, 30, 25, 20, 0, 5],
-    "Other": [5, 10, 20, 25, 25, 5, 10],
+# Rate card ($/hr by level). REAL numbers from Justine Morin's July 22 rate card,
+# except Renewable Specialist (not on her card - kept as a flagged placeholder).
+RATE_CARD = OrderedDict([("Partner", 945), ("MD", 875), ("Director", 800),
+                         ("VP", 725), ("Senior Associate", 575),
+                         ("Renewable Specialist", 250), ("Associate", 375)])
+# Split % by level, per workstream group. TDD + Modeling are Justine's REAL bands
+# (July 22): Partner 10, [Director OR MD] 25, VP 30, [Senior Associate OR
+# Associate] 35. She noted a deal carries only ONE of {MD, Director} and only ONE
+# of {SA, Associate}, so the band is placed on BOTH members of each either/or slot
+# ([P,MD,Dir,VP,SA,Ren,Assoc]) - the fee engine routes it to whichever level is
+# actually staffed (the other's share simply never materialises). Rows therefore
+# total >100% by design where a slot lists two levels (the per-deal allocation is
+# still 100%, spread across the four staffed levels). Structuring / Legal / Other
+# are still PLACEHOLDERS (awaited from the team).
+SPLIT_PLACEHOLDER = {   # group -> [Partner, MD, Director, VP, SA, Renewable, Assoc] %
+    "TDD": [10, 25, 25, 30, 35, 0, 35],          # real (Justine, July 22)
+    "Modeling": [10, 25, 25, 30, 35, 0, 35],     # real (Justine, July 22)
+    "Structuring": [10, 20, 30, 20, 15, 0, 5],   # placeholder - awaited
+    "Legal docs review": [5, 15, 30, 25, 20, 0, 5],  # placeholder - awaited
+    "Other": [5, 10, 20, 25, 25, 5, 10],         # placeholder - awaited
 }
+# either/or staffing slots (Justine): the band sits on both, one is staffed per deal
+SLOT_PARTNER = {"MD": "Director", "Director": "MD",
+                "Senior Associate": "Associate", "Associate": "Senior Associate"}
 GROUP_DURATION = OrderedDict([("TDD", 8), ("Modeling", 6), ("Structuring", 6),
                               ("Legal docs review", 4), ("Other", 6)])
 
@@ -689,8 +701,9 @@ def build(deals, assigns, review, out_path):
 
     # --- Step 8: fee -> hours allocation parameters (Step 9 wires them in) ---
     wcell(tpl, TW_TITLE, 1,
-          "FEE -> HOURS ALLOCATION PARAMETERS  (fill the yellow cells with the "
-          "team's real numbers; wired to hours in Step 9)", F_BOLD, FILL_YELLOW)
+          "FEE -> HOURS ALLOCATION PARAMETERS  (rate card + TDD/Modeling split are "
+          "the team's real numbers, Jul 22; Renewable rate + Structuring/Legal/"
+          "Other splits still to confirm)", F_BOLD, FILL_YELLOW)
     # rate card ($/hr by level)
     wcell(tpl, TW_RATE - 1, 1, "Rate card - $/hr by level", F_BOLD)
     wcell(tpl, TW_RATE, 1, "Level", F_HDR, FILL_HDR)
@@ -699,21 +712,26 @@ def build(deals, assigns, review, out_path):
         rr = TW_RATE + 1 + k
         wcell(tpl, rr, 1, lvl, F_BODY)
         wcell(tpl, rr, 2, rate, F_INPUT, FILL_YELLOW, "$#,##0")
-    # split matrix (workstream group x level, each row = 100%)
+    # split matrix (workstream group x level). Each staffed deal must allocate
+    # 100% of the fee, but a row may total MORE than 100% where an either/or slot
+    # lists both levels (e.g. MD and Director both at 25%): only one is staffed per
+    # deal, so the per-deal allocation is still 100%. The checksum therefore flags
+    # only rows that total UNDER 100% (genuinely under-allocated).
     wcell(tpl, TW_SPLIT - 1, 1,
-          "Fee split % by level, per workstream group (each row must total 100%)",
-          F_BOLD)
-    for j, t in enumerate(["Workstream group"] + TEMPLATE_LEVELS + ["Check ="], 1):
+          "Fee split % by level, per workstream group (a deal allocates 100%; a "
+          "row may exceed 100% where a slot lists two either/or levels - MD/"
+          "Director, Senior Associate/Associate)", F_BOLD)
+    for j, t in enumerate(["Workstream group"] + TEMPLATE_LEVELS + ["Row total"], 1):
         wcell(tpl, TW_SPLIT, j, t, F_HDR, FILL_HDR)
     for k, grp in enumerate(WS_GROUPS):
         rr = TW_SPLIT + 1 + k
         wcell(tpl, rr, 1, grp, F_BODY)
         for j, pct in enumerate(SPLIT_PLACEHOLDER[grp], start=2):
             wcell(tpl, rr, j, pct / 100.0, F_INPUT, FILL_YELLOW, "0%")
-        wcell(tpl, rr, 9, f'=SUM($B{rr}:$H{rr})', F_BODY, fmt="0%")   # checksum
+        wcell(tpl, rr, 9, f'=SUM($B{rr}:$H{rr})', F_BODY, fmt="0%")   # row total
     tpl.conditional_formatting.add(
         f"I{TW_SPLIT+1}:I{TW_SPLIT+len(WS_GROUPS)}",
-        FormulaRule(formula=[f"ABS(I{TW_SPLIT+1}-1)>0.001"], fill=FILL_RED))
+        FormulaRule(formula=[f"I{TW_SPLIT+1}<0.999"], fill=FILL_RED))
     # default duration per group
     wcell(tpl, TW_DUR - 1, 1,
           "Default duration (weeks) per group - used when a deal has no dates",
@@ -725,11 +743,14 @@ def build(deals, assigns, review, out_path):
         wcell(tpl, rr, 1, grp, F_BODY)
         wcell(tpl, rr, 2, wk, F_INPUT, FILL_YELLOW, "0")
     wcell(tpl, TW_DUR + len(GROUP_DURATION) + 2, 1,
-          "All values above are PLACEHOLDERS. Mechanism (decided Jul 21): "
           "hours(level) = fee(group) x split%(group,level) / rate(level), summed "
           "over a deal's priced workstream groups, spread over its kick-off->"
-          "delivery weeks (or the default duration when no dates). Step 9 adds the "
-          "per-group fee columns on Deals and wires this in.", F_NOTE)
+          "delivery weeks (or the default duration when no dates), then divided "
+          "among the people staffed at that level. Rate card + TDD/Modeling split "
+          "are REAL (Justine, Jul 22). Still placeholders: the Renewable "
+          "Specialist rate (not on her card), the Structuring/Legal/Other splits, "
+          "and every default duration. Enter a fee on Deals to see it flow.",
+          F_NOTE)
     tpl.freeze_panes = "B3"
 
     # ---------------- Actuals (Step 4: NetSuite time entries + matching)
@@ -1528,14 +1549,20 @@ def build(deals, assigns, review, out_path):
         # fee-funded-level gap (Step 11, the deferred Step 9 flag): a workstream
         # fee funds hours at a level (Deals BJ..BP > 0) but nobody active is
         # staffed there. Gated on the deal carrying a fee (Deals BD > 0), so it is
-        # silent until fees are entered.
+        # silent until fees are entered. For an either/or slot (MD/Director,
+        # SA/Associate) the band sits on both levels, so a level only counts as a
+        # gap when NEITHER it nor its slot partner is staffed.
+        def _cnt_active(ln):
+            return (f'COUNTIFS(Assignments!$C$2:$C${LAST_A},$A{r},'
+                    f'Assignments!$F$2:$F${LAST_A},"{ln}",'
+                    f'Assignments!$G$2:$G${LAST_A},"Active")')
         fee_clauses = []
         for j, lvl_name in enumerate(LEVELS):
-            fee_clauses.append(
-                f'AND(Deals!${get_column_letter(DW_FIRST + j)}{rr}>0,'
-                f'COUNTIFS(Assignments!$C$2:$C${LAST_A},$A{r},'
-                f'Assignments!$F$2:$F${LAST_A},"{lvl_name}",'
-                f'Assignments!$G$2:$G${LAST_A},"Active")=0)')
+            clause = (f'AND(Deals!${get_column_letter(DW_FIRST + j)}{rr}>0,'
+                      f'{_cnt_active(lvl_name)}=0')
+            if lvl_name in SLOT_PARTNER:
+                clause += f',{_cnt_active(SLOT_PARTNER[lvl_name])}=0'
+            fee_clauses.append(clause + ')')
         fee_gap = (f'IF(Deals!${get_column_letter(FEE_TOTAL)}{rr}=0,FALSE,'
                    f'OR({",".join(fee_clauses)}))')
         wcell(chk, r, 9,
@@ -1640,7 +1667,7 @@ def build(deals, assigns, review, out_path):
         "Level-default hours are placeholders",
         "NetSuite actuals - go-live setup",
         "Check-in tab definitions to confirm",
-        "Fee-allocation parameters awaited",
+        "Fee-allocation parameters - partly real, rest awaited",
     }   # "Effort templates are placeholders" -> now legacy, routed to audit
     blanket = [
         ("Dashboard is the shared front page", "", "Dashboard tab (Step 11)",
@@ -1671,17 +1698,20 @@ def build(deals, assigns, review, out_path):
          "Step 3 archetypes -> hrs/wk by level. Now LEGACY - superseded by the "
          "fee->workstream model (Step 8/9); kept hidden for reference.",
          "No action - replaced by the fee-allocation parameters below"),
-        ("Fee-allocation parameters awaited", "", "Templates tab + Deals fees",
-         "The fee->hours engine is LIVE (Step 9): enter a fee per workstream "
-         "group on a deal (Deals 'Fee $' columns) and it becomes hours by level = "
-         "fee x split% / rate, spread over the deal's dates (or a default "
-         "duration), split among the people staffed at each level. The rate card "
-         "and split-% matrix (Templates) are still PLACEHOLDERS until the team's "
-         "real numbers arrive.",
-         "Fill the real rate card + level-split % matrix (Templates yellow "
-         "cells), then price deals by entering fees. Note: a level the split "
-         "funds but nobody is staffed at shows no hours - staff it or the fee's "
-         "hours for that level are not visible in Capacity."),
+        ("Fee-allocation parameters - partly real, rest awaited", "",
+         "Templates tab + Deals fees",
+         "LOADED (Justine, Jul 22): the rate card (Partner 945 / MD 875 / "
+         "Director 800 / VP 725 / Sr Assoc 575 / Associate 375) and the TDD + "
+         "Modeling split (Partner 10, Director-or-MD 25, VP 30, Sr-Assoc-or-"
+         "Associate 35 - the band sits on both levels of each either/or slot, and "
+         "the engine routes it to whichever one is staffed). STILL PLACEHOLDER: "
+         "the Renewable Specialist rate (not on her card), the Structuring / "
+         "Legal docs / Other splits, and every default duration.",
+         "Confirm the Renewable Specialist rate and the Structuring/Legal/Other "
+         "splits; set default durations; then price deals by entering fees on "
+         "Deals. If a deal ever staffs BOTH an MD and a Director (or both a Sr "
+         "Assoc and an Associate) it will over-allocate that slot - Justine's "
+         "note says that is atypical."),
         ("NetSuite actuals - go-live setup", "", "Actuals tab",
          "Step 4 added the actuals import + Variance calibration, demonstrated "
          "with a fabricated 20-row sample (flagged). Verify does the register "
